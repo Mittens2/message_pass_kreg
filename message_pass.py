@@ -4,7 +4,7 @@ from utils import logistic, time
 
 class SparseMP():
 
-    def __init__(self, train_set, adj, adj_list=None, lr=0.01, damping=0.1, epochs=100, max_iters=10):
+    def __init__(self, train_set, adj, adj_list=None, lr=0.01, damping=0.1, eps=1e-16, epochs=100, max_iters=10):
         torch.manual_seed(42)
         self.train_set = train_set
         n = adj.shape[0]
@@ -27,37 +27,37 @@ class SparseMP():
 
     def forward(self):
         adj = self.adj
-        n = adj.shape[0]
         adj_list = self.adj_list
+        n = adj.shape[0]
+        k = adj_list.shape[1]
         # Initialize to zeros because using log ratio
         message_old = torch.zeros(n, n)
         message_new = torch.zeros(n, n)
         iters = 0
-        while iters < self.max_iters:
+        while iters == 0 or iters < self.max_iters and torch.max(torch.abs(message_new - message_old)) > self.eps):
+            # Old way of calculating marginals
             # message_new[mask] = (torch.sum(torch.gather(message_old, 1, adj_list), 1)
             # .unsqueeze(1).repeat(1, n) - message_old)[mask]
             # local = torch.zeros(n, n).masked_scatter(mask, torch.diag(torch.diag(adj)))
             # message_new += torch.log((torch.exp(local + adj) + 1) / (torch.exp(local) + 1)) + local
             # message_new = message_new * (self.damping) + (1 - self.damping) * message_old
             # message_old = message_new.clone()
-            message_new.scatter(1, adj_list, torch.sum(message_old.gather(1, adj_list), 1)
-            .unsqueeze(1).expand(-1, n).gather(1, adj_list) - message_old.gather(1, adj_list))
+            message_old = message_old.scatter(1, adj_list, message_new.gather(1, adj_list))
+
+            message_new = message_new.scatter(1, adj_list, torch.sum(message_old.gather(1, adj_list), 1)
+            .unsqueeze(1).expand(-1, k) - message_old.gather(1, adj_list))
 
             local = torch.diag(adj).unsqueeze(0).expand(n, -1)
-
             message_new.scatter_add_(1, adj_list, torch.log((torch.exp(adj.gather(1, adj_list)
             + local.gather(1, adj_list)) + 1) / (torch.exp(local.gather(1, adj_list)) + 1)))
 
-            message_new.scatter(1, adj_list, message_new.gather(1, adj_list) * self.damping
+            message_new = message_new.scatter(1, adj_list, message_new.gather(1, adj_list) * self.damping
             + (1 - self.damping) * message_old.gather(1, adj_list))
 
-            message_old.scatter(1, adj_list, message_new.gather(1, adj_list))
-            
             iters+=1
 
-        self.marginals = logistic(torch.sum(torch.gather(message_old, 1, adj_list), 1))
-        print(self.marginals)
-        self.message_old = message_old
+        self.marginals = logistic(torch.sum(torch.gather(message_new, 1, adj_list), 1))
+        self.message_old = message_new
 
     def backward(self, data):
         n = self.adj.shape[0]
@@ -76,15 +76,19 @@ class SparseMP():
         message_new = message_old.clone()
 
         iters = 0
-        while iters < self.max_iters:
-            message_new.scatter(1, adj_list, torch.sum(message_old.gather(1, adj_list), 1)
+        while iters == 0 or iters < self.max_iters and torch.max(torch.abs(message_new - message_old)) > self.eps):
+            message_old = message_old.scatter(1, adj_list, message_new.gather(1, adj_list))
+
+            message_new = message_new.scatter(1, adj_list, torch.sum(message_old.gather(1, adj_list), 1)
             .unsqueeze(1).expand(-1, n).gather(1, adj_list) - message_old.gather(1, adj_list))
+
             local = torch.cat((torch.diag(adj).unsqueeze(0).expand(n - clamp, -1), torch.zeros(clamp, n)), 0)
             message_new.scatter_add_(1, adj_list, torch.log((torch.exp(adj.gather(1, adj_list)
             + local.gather(1, adj_list)) + 1) / (torch.exp(local.gather(1, adj_list)) + 1)))
-            message_new.scatter(1, adj_list, message_new.gather(1, adj_list) * self.damping
+
+            message_new = message_new.scatter(1, adj_list, message_new.gather(1, adj_list) * self.damping
             + (1 - self.damping) * message_old.gather(1, adj_list))
-            message_old.scatter(1, adj_list, message_new.gather(1, adj_list))
+
             iters += 1
 
         conditionals = logistic(torch.sum(message_old, 1)).unsqueeze(1)
@@ -95,30 +99,3 @@ class SparseMP():
         - torch.mm(marginals, torch.transpose(marginals, 0, 1)).gather(1, adj_list)
         adj.scatter_add_(1, adj_list, self.lr * update)
         adj[(torch.eye(n) != 0)] += self.lr * (conditionals.squeeze(1) - marginals.squeeze(1))
-
-    # def backward(self, data):
-    #     n = self.adj.shape[0]
-    #     # Condition on next data point
-    #     clamp = data.size()[0]
-    #     adj = self.adj[:-clamp, :-clamp] + torch.diag(torch.sum(self.adj[:-clamp, -clamp:], 1))
-    #     adj_list = self.adj_list[adj_list < n - clamp]
-    #
-    #     #mask = self.mask[:-clamp, :-clamp]
-    #     message_old = self.message_old[:-clamp, :-clamp]
-    #     message_new = message_old.clone()
-    #     iters = 0
-    #
-    #     while iters < self.max_iters:
-    #         message_new[mask] = (torch.sum(message_old, 1).unsqueeze(1).repeat(1, n) - message_old)[mask]
-    #         local = torch.zeros(n, n).masked_scatter(mask, torch.diag(torch.diag(adj)))
-    #         message_new += torch.log((torch.exp(local + adj) + 1) / (torch.exp(local) + 1)) + local
-    #         message_new = message_new * (self.damping) + (1 - self.damping) * message_old
-    #         message_old = message_new.clone()
-    #
-    #     conditionals = logistic(torch.sum(message_old, 1)).unsqueeze(1)
-    #     # update model parameters
-    #     # TODO: Maybe for interaction terms should use joint probability, not marginals?
-    #     marginals = self.marginals
-    #     adj[mask] += self.lr * (torch.mm(conditionals, torch.transpose(conditionals, 0, 1))  \
-    #     - torch.mm(marginals[:-clamp], torch.transpose(marginals[:-clamp], 0, 1)))[mask]
-    #     adj[(torch.eye(n) != 0)] += self.lr * (conditionals - marginals[:-clamp]).squeeze(1)

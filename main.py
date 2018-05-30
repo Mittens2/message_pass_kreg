@@ -15,12 +15,9 @@ if __name__ == "__main__":
     if not os.path.exists(root):
         os.mkdir(root)
     trans = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (1.0,))])
-    # if not exist, download mnist dataset
+    # if data does not exist, download mnist dataset
     train_set = dset.MNIST(root=root, train=True, transform=trans, download=True)
-    # data_loader = torch.utils.data.DataLoader(train_set,
-    #                                       batch_size=4,
-    #
-    n, k = 1000, 10
+    n, k = 10000, 10
     G = nx.random_regular_graph(k, n, seed=42)
     sparse_adj = nx.adjacency_matrix(G)
     adj = sparse_adj.todense()
