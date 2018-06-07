@@ -4,6 +4,7 @@ import os
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
 import scipy.sparse as sp
+import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
 from message_pass import SparseMP
@@ -24,3 +25,21 @@ if __name__ == "__main__":
     _, col = sparse_adj.nonzero()
     adj_list = col.reshape(n, -1)
     smp = SparseMP(train_set=train_set, adj=adj, adj_list=adj_list)
+
+    n = 1
+    plt.figure(figsize=(4.2, 4))
+    for i in range(n):
+        #d = np.random.randint(0, len(train_set))
+        d = 0
+        X0 = train_set[d][0].squeeze(0)
+        plt.subplot(2, n, 2 * i + 1)
+        plt.imshow(X0, cmap=plt.cm.gray_r,interpolation='nearest')
+        plt.subplot(2, n, 2 * i + 2)
+        plt.imshow(smp.expectation(X0), cmap=plt.cm.gray_r,
+                   interpolation='nearest')
+        plt.xticks(())
+        plt.yticks(())
+        print("SMP: " + str(i) + " images generated.")
+    plt.suptitle('Regenerated numbers', fontsize=16)
+    plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
+    plt.show()
