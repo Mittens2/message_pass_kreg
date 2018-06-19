@@ -6,10 +6,8 @@ from torch.utils.data import DataLoader
 
 class SparseMP():
 
-    def __init__(self, train_set, adj, adj_list=None, lr=0.1, damping=0.1, eps=1e-16, epochs=10, max_iters=10, batch_size=1):
+    def __init__(self, adj, adj_list=None, lr=0.3, damping=0.2, eps=1e-16, epochs=10, max_iters=20, batch_size=1):
         #torch.manual_seed(0)
-        self.train_set = train_set
-        self.train_loader = DataLoader(train_set, batch_size=batch_size, shuffle=True, num_workers=1)
         n = adj.shape[0]
         self.max_iters = max_iters
         self.lr = lr
@@ -19,28 +17,28 @@ class SparseMP():
         self.batch_size = batch_size
         # TODO: since adjacency matrix is being passed, only allowing for interraction terms
         # Use upper triangular matrix
-        adj = (torch.from_numpy(adj).type(torch.FloatTensor) * (torch.rand(n , n) - 0.5))
+        adj = (torch.from_numpy(adj).type(torch.FloatTensor) * (torch.rand(n , n) * 2 - 1))
         self.adj = torch.triu(adj)
         self.adj_list = torch.from_numpy(adj_list).type(torch.LongTensor)
-        self.inference()
 
-    def inference(self):
-        """ Perform inference for k-regular graph using loopy bp.
+    def train(self, train_set):
+        """ Perform training for k-regular graph using loopy bp.
         """
+        train_loader = DataLoader(train_set, batch_size=self.batch_size, shuffle=True, num_workers=1)
         i = 0
         while i < self.epochs:
-            data, label = self.train_set[0]
+            data, label = train_set[0]
             data = data.view(-1).unsqueeze(1)
             #data, label = next(iter(self.train_loader))
             #data = data.squeeze()
             #data = torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1)
-            self.forward()
-            self.backward(data)
+            self.free_mp()
+            self.clamp_mp(data)
             self.update(data)
             print(i)
             i += 1
 
-    def forward(self):
+    def free_mp(self):
         """ Message-passing for unclamped graphical model.
         """
         adj = self.adj
@@ -69,7 +67,7 @@ class SparseMP():
 
         self.message_old = message_new
 
-    def backward(self, data):
+    def clamp_mp(self, data):
         """ Clamped message-passing for one mini-batch.
         Parameters
         ----------
