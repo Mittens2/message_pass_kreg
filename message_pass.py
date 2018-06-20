@@ -29,9 +29,11 @@ class SparseMP():
         while i < self.epochs:
             data, label = train_set[0]
             data = data.view(-1).unsqueeze(1)
-            #data, label = next(iter(self.train_loader))
-            #data = data.squeeze()
-            #data = torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1)
+            # data, label = next(iter(self.train_loader))
+            # data = data.squeeze()
+            # data = torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1)
+            if torch.cuda.is_available():
+                data = data.cuda()
             self.free_mp()
             self.clamp_mp(data)
             self.update(data)
