@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 class SparseMP():
 
-    def __init__(self, adj, adj_list=None, lr=0.3, damping=0.2, eps=1e-16, epochs=10, max_iters=20, batch_size=1):
+    def __init__(self, adj, adj_list=None, lr=0.5, damping=0.1, eps=1e-16, epochs=10, max_iters=20, batch_size=1):
         #torch.manual_seed(0)
         n = adj.shape[0]
         self.max_iters = max_iters
@@ -17,6 +17,7 @@ class SparseMP():
         self.batch_size = batch_size
         # TODO: since adjacency matrix is being passed, only allowing for interraction terms
         # Use upper triangular matrix
+        adj[torch.eye(n) == 1] = 1
         adj = (torch.from_numpy(adj).type(torch.FloatTensor) * (torch.rand(n , n) * 2 - 1))
         self.adj = torch.triu(adj)
         self.adj_list = torch.from_numpy(adj_list).type(torch.LongTensor)
@@ -163,8 +164,6 @@ class SparseMP():
         marginals = logistic(torch.sum(torch.gather(message_old, 0, torch.transpose(adj_list, 0, 1)), 0))
         conditionals = torch.sum(logistic(torch.sum(message_new.gather(0, torch.transpose(adj_clamp, 0, 1)), 0)), 1) / self.batch_size
         adj[(torch.eye(n) == 1)] += self.lr * (conditionals - marginals)
-        eq = torch.eq(adj, torch.transpose(adj, 0, 1))
-        print(adj)
 
     def gibbs(self, data, n):
         """ Perform n iterations of gibbs sampling, and return result.

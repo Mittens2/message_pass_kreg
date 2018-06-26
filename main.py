@@ -25,8 +25,7 @@ if __name__ == "__main__":
     _, col = sparse_adj.nonzero()
     adj_list = col.reshape(n, -1)
 
-    # transforms.Normalize((0.5,), (1.0,))
-    trans = transforms.Compose([transforms.ToTensor()])
+    trans = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (1.0,))])
     # if data does not exist, download mnist dataset
     train_set = dset.MNIST(root=root, train=True, transform=trans, download=True)
     model = SparseMP(adj=adj, adj_list=adj_list)
