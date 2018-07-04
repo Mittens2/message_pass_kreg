@@ -6,6 +6,7 @@ import torchvision.transforms as transforms
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
+import scipy.sparse as sp
 from message_pass import SparseMP
 from random import random
 
@@ -18,17 +19,18 @@ if __name__ == "__main__":
         os.mkdir(root)
 
     # Generate k-regular graph
-    n, k = 2000, 3
+    n, k = 10000, 10
     G = nx.random_regular_graph(k, n, seed=42)
     sparse_adj = nx.adjacency_matrix(G)
-    adj = sparse_adj.todense()
     _, col = sparse_adj.nonzero()
-    adj_list = col.reshape(n, -1)
+    adj_list = torch.from_numpy(col.reshape(n, -1)).type(torch.LongTensor)
+    adj = torch.rand(n, k) - 0.5
+    local = torch.rand(n) - 0.5
 
-    trans = transforms.Compose([transforms.ToTensor(), transforms.Normalize((0.5,), (1.0,))])
+    trans = transforms.Compose([transforms.ToTensor()])
     # if data does not exist, download mnist dataset
     train_set = dset.MNIST(root=root, train=True, transform=trans, download=True)
-    model = SparseMP(adj=adj, adj_list=adj_list)
+    model = SparseMP(adj=adj, local=local, adj_list=adj_list)
     model.train(train_set=train_set)
 
     #Generate n ** 2 samples from graphical model
