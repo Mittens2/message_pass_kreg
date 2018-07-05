@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 class SparseMP():
 
-    def __init__(self, adj, local, adj_list, lr=0.5, damping=0.1, eps=1e-16, epochs=100, max_iters=5, batch_size=1):
+    def __init__(self, adj, local, adj_list, lr=0.1, damping=0.1, eps=1e-16, epochs=50, max_iters=10, batch_size=1):
         #torch.manual_seed(0)
         n = adj.shape[0]
         self.max_iters = max_iters
@@ -27,7 +27,7 @@ class SparseMP():
         i = 0
         while i < self.epochs:
             data, label = train_set[0]
-            data = data.view(-1).unsqueeze(1)
+            data = torch.round(data.view(-1).unsqueeze(1))
             # data, label = next(iter(self.train_loader))
             # data = data.squeeze()
             # data = torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1)

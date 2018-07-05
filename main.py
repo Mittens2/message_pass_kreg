@@ -19,7 +19,7 @@ if __name__ == "__main__":
         os.mkdir(root)
 
     # Generate k-regular graph
-    n, k = 10000, 10
+    n, k = 20000, 5
     G = nx.random_regular_graph(k, n, seed=42)
     sparse_adj = nx.adjacency_matrix(G)
     _, col = sparse_adj.nonzero()
@@ -33,15 +33,16 @@ if __name__ == "__main__":
     model = SparseMP(adj=adj, local=local, adj_list=adj_list)
     model.train(train_set=train_set)
 
-    #Generate n ** 2 samples from graphical model
-    n = 1
+    #Generate n samples from graphical model
+    n = 2
     plt.figure(figsize=(4.2, 4))
     X0 = train_set[0][0].squeeze(0)
-    print(train_set[0][1])
-    for i in range(1, n ** 2 + 1):
-        plt.imshow(model.gibbs(X0, 100), cmap=plt.cm.gray_r,
-                   interpolation='nearest')
-        plt.subplot(n, n, i)
+    print(X0.size())
+    plt.subplot(n + 1, 1, 1)
+    plt.imshow(X0, cmap=plt.cm.gray_r, interpolation='nearest')
+    for i in range(1, n + 1):
+        plt.subplot(n + 1, 1, i + 1)
+        plt.imshow(model.gibbs(X0, 100), cmap=plt.cm.gray_r, interpolation='nearest')
         plt.xticks(())
         plt.yticks(())
         print("SMP: " + str(i) + " images generated.")
