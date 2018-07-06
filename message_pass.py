@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 class SparseMP():
 
-    def __init__(self, adj, local, adj_list, lr=0.1, damping=0.1, eps=1e-16, epochs=50, max_iters=10, batch_size=1):
+    def __init__(self, adj, local, adj_list, lr=0.2, damping=0.1, eps=1e-16, epochs=10, max_iters=10, batch_size=1):
         #torch.manual_seed(0)
         n = adj.shape[0]
         self.max_iters = max_iters
@@ -26,11 +26,11 @@ class SparseMP():
         train_loader = DataLoader(train_set, batch_size=self.batch_size, shuffle=True, num_workers=1)
         i = 0
         while i < self.epochs:
-            data, label = train_set[0]
-            data = torch.round(data.view(-1).unsqueeze(1))
-            # data, label = next(iter(self.train_loader))
-            # data = data.squeeze()
-            # data = torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1)
+            # data, label = train_set[0]
+            # data = torch.round(data.view(-1).unsqueeze(1))
+            data, label = next(iter(train_loader))
+            data = data.squeeze()
+            data = torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1)
             if torch.cuda.is_available():
                 data = data.cuda()
             self.free_mp()
@@ -43,8 +43,6 @@ class SparseMP():
         n = adj_list.shape[0]
         k = adj_list.shape[1]
         range = torch.arange(n, dtype=torch.long).unsqueeze(1).expand(-1, k).contiguous().view(-1).unsqueeze(1)
-        if len(adj_list.shape) > 2:
-            range = range.unsqueeze(2).expand(n * k, -1, self.batch_size)
         mask = (adj_list.index_select(0, adj_list.view(-1)) == range)
         return message_in.index_select(0, adj_list.view(-1))[mask]
 
@@ -80,11 +78,11 @@ class SparseMP():
         adj = self.adj.unsqueeze(2).expand(n, -1, self.batch_size)
         k = adj.shape[1]
         local = self.local.unsqueeze(1).expand(-1, self.batch_size)
-        adj_list = self.adj_list.unsqueeze(2).expand(n, -1, self.batch_size)
+        adj_list = self.adj_list
         clamp = data.shape[0]
         # Add interaction of clamped units to local biases based on data vectors
         data_adj = adj.clone()
-        data_adj[adj_list < clamp] *= data[adj_list[adj_list < clamp]].squeeze()
+        data_adj[adj_list < clamp] *= data[adj_list[adj_list < clamp]].expand(-1, self.batch_size)
         data_adj[adj_list >= clamp] = 0
         local += torch.sum(data_adj, 1)
         local = torch.transpose(local.unsqueeze(2).expand(n, -1, k), 1, 2)
@@ -92,7 +90,7 @@ class SparseMP():
         adj[:clamp, :, :] = 0
         adj[adj_list < clamp] = 0
 
-        message_old = self.message_free.clone().unsqueeze(2).expand(n, -1, self.batch_size)
+        message_old = self.message_free.clone().unsqueeze(2).repeat(1, 1, self.batch_size)
         message_new = message_old.clone()
 
         iters = 0
@@ -130,7 +128,6 @@ class SparseMP():
 
         # Calculate conditional joint probability
         message_clamp = self.message_clamp
-        adj_list = adj_list.unsqueeze(2).expand(n, -1, self.batch_size)
         adj = self.adj.unsqueeze(2).expand(n, -1, self.batch_size)
         local_i = local_i.unsqueeze(2).expand(n, -1, self.batch_size)
         local_j = local_j.unsqueeze(2).expand(n, -1, self.batch_size)
@@ -149,9 +146,11 @@ class SparseMP():
 
         # Update model parameters
         self.adj += self.lr * (p_ij_cond - p_ij_marg)
+        transpose = self.in_to_out(self.adj, self.adj_list).view(n, -1)
+        eq = (self.adj == transpose)
         self.local += self.lr * (p_i_cond - p_i_marg)
 
-    def gibbs(self, data, n):
+    def gibbs(self, data, iters):
         """ Perform n iterations of gibbs sampling, and return result.
         Parameters
         ----------
@@ -168,10 +167,10 @@ class SparseMP():
         x_new = torch.round(logistic(torch.sum(adj * x.unsqueeze(1).expand(-1, n).gather(1, adj_list), 1) + local))
         # Sample until convergence
         i = 0
-        while not torch.eq(x, x_new).all() and i < n:
+        while not torch.eq(x, x_new).all() and i < iters:
             x = x_new.clone()
             #print(x[-data.view(-1).shape[0]:].view(data.shape[0], -1))
             x_new = torch.round(logistic(torch.sum(adj * x.unsqueeze(1).expand(-1, n).gather(1, adj_list), 1) + local))
             i += 1
         # Return the state of the visible units
-        return x[-data.view(-1).shape[0]:].view(data.shape[0], -1)
+        return x[:data.view(-1).shape[0]].view(data.shape[0], -1)
