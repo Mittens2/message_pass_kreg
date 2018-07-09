@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 class SparseMP():
 
-    def __init__(self, adj, local, adj_list, lr=0.2, damping=0.1, eps=1e-16, epochs=10, max_iters=10, batch_size=1):
+    def __init__(self, adj, local, adj_list, lr=0.1, damping=1, eps=1e-16, epochs=100, max_iters=10, batch_size=1):
         #torch.manual_seed(0)
         n = adj.shape[0]
         self.max_iters = max_iters
@@ -82,7 +82,7 @@ class SparseMP():
         clamp = data.shape[0]
         # Add interaction of clamped units to local biases based on data vectors
         data_adj = adj.clone()
-        data_adj[adj_list < clamp] *= data[adj_list[adj_list < clamp]].expand(-1, self.batch_size)
+        data_adj[adj_list < clamp] *= data[adj_list[adj_list < clamp]]
         data_adj[adj_list >= clamp] = 0
         local += torch.sum(data_adj, 1)
         local = torch.transpose(local.unsqueeze(2).expand(n, -1, k), 1, 2)
@@ -164,13 +164,13 @@ class SparseMP():
         k = adj_list.shape[1]
         # Initialize units to random weights
         x = torch.round(torch.rand(n))
-        x_new = torch.round(logistic(torch.sum(adj * x.unsqueeze(1).expand(-1, n).gather(1, adj_list), 1) + local))
+        x_new = logistic(torch.sum(adj * x.unsqueeze(0).expand(n, -1).gather(1, adj_list), 1) + local)
         # Sample until convergence
         i = 0
         while not torch.eq(x, x_new).all() and i < iters:
             x = x_new.clone()
             #print(x[-data.view(-1).shape[0]:].view(data.shape[0], -1))
-            x_new = torch.round(logistic(torch.sum(adj * x.unsqueeze(1).expand(-1, n).gather(1, adj_list), 1) + local))
+            x_new = logistic(torch.sum(adj * x.unsqueeze(0).expand(n, -1).gather(1, adj_list), 1) + local)
             i += 1
         # Return the state of the visible units
         return x[:data.view(-1).shape[0]].view(data.shape[0], -1)
