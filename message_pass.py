@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 class SparseMP():
 
-    def __init__(self, adj, local, adj_list, lr=0.1, damping=1, eps=1e-16, epochs=100, max_iters=10, batch_size=1):
+    def __init__(self, adj, local, adj_list, lr=0.1, damping=0.1, eps=1e-16, epochs=100, max_iters=10, batch_size=1):
         #torch.manual_seed(0)
         n = adj.shape[0]
         self.max_iters = max_iters
@@ -23,12 +23,13 @@ class SparseMP():
     def train(self, train_set):
         """ Perform training for k-regular graph using loopy bp.
         """
-        train_loader = DataLoader(train_set, batch_size=self.batch_size, shuffle=True, num_workers=1)
+        train_loader = iter(DataLoader(train_set, batch_size=self.batch_size, shuffle=True, num_workers=1))
         i = 0
         while i < self.epochs:
             # data, label = train_set[0]
-            # data = torch.round(data.view(-1).unsqueeze(1))
-            data, label = next(iter(train_loader))
+            # data = data.view(-1).unsqueeze(1)
+            data, label = next(train_loader)
+            print(label)
             data = data.squeeze()
             data = torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1)
             if torch.cuda.is_available():
@@ -145,10 +146,8 @@ class SparseMP():
         p_i_cond = torch.sum(logistic(torch.sum(message_clamp, 1)), 1) / self.batch_size
 
         # Update model parameters
-        self.adj += self.lr * (p_ij_cond - p_ij_marg)
-        transpose = self.in_to_out(self.adj, self.adj_list).view(n, -1)
-        eq = (self.adj == transpose)
-        self.local += self.lr * (p_i_cond - p_i_marg)
+        self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond - p_ij_marg), -1, 1)
+        self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), -1, 1)
 
     def gibbs(self, data, iters):
         """ Perform n iterations of gibbs sampling, and return result.
@@ -163,13 +162,13 @@ class SparseMP():
         n = adj.shape[0]
         k = adj_list.shape[1]
         # Initialize units to random weights
-        x = torch.round(torch.rand(n))
+        x = torch.rand(n)
+        #x[:data.view(-1).shape[0]] = data.view(-1)
         x_new = logistic(torch.sum(adj * x.unsqueeze(0).expand(n, -1).gather(1, adj_list), 1) + local)
         # Sample until convergence
         i = 0
         while not torch.eq(x, x_new).all() and i < iters:
             x = x_new.clone()
-            #print(x[-data.view(-1).shape[0]:].view(data.shape[0], -1))
             x_new = logistic(torch.sum(adj * x.unsqueeze(0).expand(n, -1).gather(1, adj_list), 1) + local)
             i += 1
         # Return the state of the visible units
