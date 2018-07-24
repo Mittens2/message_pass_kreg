@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 
 class SparseMP():
 
-    def __init__(self, adj, local, adj_list, lr=0.1, damping=0.1, eps=1e-16, epochs=100, max_iters=10, batch_size=1):
+    def __init__(self, adj, local, adj_list, lr=0.1, damping=1., eps=1e-5, epochs=100, max_iters=10, batch_size=1):
         #torch.manual_seed(0)
         n = adj.shape[0]
         self.max_iters = max_iters
@@ -16,8 +16,12 @@ class SparseMP():
         self.epochs = epochs
         self.batch_size = batch_size
         # Use upper triangular matrix
-        self.adj = adj
-        self.local = local
+        if torch.cuda.is_available():
+            self.local = local.cuda()
+            self.adj = adj.cuda()
+        else:
+            self.adj = adj
+            self.local = local
         self.adj_list = adj_list
 
     def train(self, train_set):
@@ -29,11 +33,8 @@ class SparseMP():
             # data, label = train_set[0]
             # data = data.view(-1).unsqueeze(1)
             data, label = next(train_loader)
-            print(label)
             data = data.squeeze()
-            data = torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1)
-            if torch.cuda.is_available():
-                data = data.cuda()
+            data = torch.round(torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1))
             self.free_mp()
             self.clamp_mp(data)
             self.update(data)
@@ -58,6 +59,9 @@ class SparseMP():
         # Initialize to zeros because using log ratio
         message_old = torch.zeros(n, k)
         message_new = torch.zeros(n, k)
+        if torch.cuda.is_available():
+            message_old = message_old.cuda()
+            message_new = message_new.cuda()
         iters = 0
         while iters == 0 or (iters < self.max_iters and torch.max(torch.abs(message_new - message_old)) > self.eps):
             message_old = message_new.clone()
@@ -65,7 +69,7 @@ class SparseMP():
             message_new = self.in_to_out(torch.log((torch.exp(local + adj + message) + 1) / (torch.exp(local + message) + 1)), adj_list).view(n, -1)
             message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
-
+        print(iters)
         self.message_free = message_new
 
     def clamp_mp(self, data):
@@ -146,8 +150,10 @@ class SparseMP():
         p_i_cond = torch.sum(logistic(torch.sum(message_clamp, 1)), 1) / self.batch_size
 
         # Update model parameters
-        self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond - p_ij_marg), -1, 1)
-        self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), -1, 1)
+        self.adj = torch.clamp(self.adj + self.lr * self.batch_size * (p_ij_cond - p_ij_marg), -0.95, 0.95)
+        print(self.adj[data.shape[0] - 1])
+        print(self.adj[data.shape[0]])
+        self.local = torch.clamp(self.local + self.lr * self.batch_size * (p_i_cond - p_i_marg), -0.95, 0.95)
 
     def gibbs(self, data, iters):
         """ Perform n iterations of gibbs sampling, and return result.
@@ -162,14 +168,13 @@ class SparseMP():
         n = adj.shape[0]
         k = adj_list.shape[1]
         # Initialize units to random weights
-        x = torch.rand(n)
-        #x[:data.view(-1).shape[0]] = data.view(-1)
-        x_new = logistic(torch.sum(adj * x.unsqueeze(0).expand(n, -1).gather(1, adj_list), 1) + local)
+        x = torch.round(torch.rand(n))
+        x_new = (torch.rand(n) < logistic(torch.sum(adj * x.unsqueeze(0).expand(n, -1).gather(1, adj_list), 1) + local)).type(torch.FloatTensor)
         # Sample until convergence
         i = 0
         while not torch.eq(x, x_new).all() and i < iters:
             x = x_new.clone()
-            x_new = logistic(torch.sum(adj * x.unsqueeze(0).expand(n, -1).gather(1, adj_list), 1) + local)
+            x_new = (torch.rand(n) < logistic(torch.sum(adj * x.unsqueeze(0).expand(n, -1).gather(1, adj_list), 1) + local)).type(torch.FloatTensor)
             i += 1
         # Return the state of the visible units
         return x[:data.view(-1).shape[0]].view(data.shape[0], -1)
