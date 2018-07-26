@@ -166,7 +166,10 @@ class SparseMP():
         # Sample iter times
         i = 0
         while i < iters:
-            x = (logistic(torch.sum(adj * x.unsqueeze(0).expand(n, -1).gather(1, adj_list), 1) + local) > torch.rand(n, device=self.device)).type(torch.FloatTensor)
+            prob = logistic(torch.sum(adj * x.unsqueeze(0).expand(n, -1).gather(1, adj_list), 1) + local)
+            sample = torch.rand(n, device=self.device)
+            x[prob > sample] = 1
+            x[prob < sample] = 0
             i += 1
         # Return the state of the visible units
         return x[:data.view(-1).shape[0]].view(data.shape[0], -1)

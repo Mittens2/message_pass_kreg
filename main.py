@@ -8,6 +8,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import networkx as nx
+import igraph
 import numpy as np
 import scipy.sparse as sp
 from message_pass import SparseMP
@@ -24,6 +25,9 @@ if __name__ == "__main__":
     # Generate k-regular graph
     n, k = 100000, 5
     G = nx.random_regular_graph(k, n, seed=42)
+    #G = nx.fast_gnp_random_graph(n=n, p=5e-4)
+    #G = igraph.Graph.Erdos_Renyi(n=n, p=5e-4)
+    #G = igraph.Graph.K_Regular(n, k)
     # min, max = 3, 10
     # upper = 10
     # y = np.zeros((max - min + 1) // 2)
