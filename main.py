@@ -4,6 +4,8 @@ import os
 import numpy as np
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
+import matplotlib
+matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import networkx as nx
 import numpy as np
@@ -41,27 +43,28 @@ if __name__ == "__main__":
     sparse_adj = nx.adjacency_matrix(G)
     _, col = sparse_adj.nonzero()
     adj_list = torch.from_numpy(col.reshape(n, -1)).type(torch.LongTensor)
-    adj = torch.zeros(n, k)
-    local = torch.rand(n) - 0.5
+    if torch.cuda.is_available():
+        adj_list = adj_list.cuda()
+    adj = torch.zeros(n, k, device=device)
+    local = torch.rand(n, device=device) - 0.5
 
     trans = transforms.Compose([transforms.ToTensor()])
     # if data does not exist, download mnist dataset
     train_set = dset.MNIST(root=root, train=True, transform=trans, download=True)
-    model = SparseMP(adj=adj, local=local, adj_list=adj_list, lr=0.1, epochs=50, batch_size=10, max_iters=10)
+    model = SparseMP(adj=adj, local=local, adj_list=adj_list, eps=1e-6, lr=0.05, epochs=100, batch_size=1, max_iters=10, device=device)
     model.train(train_set=train_set)
 
     # Generate n samples from graphical model
-    n = 2
-    X0, label = train_set[7]
+    m = 3
+    X0, _ = train_set[0]
     X0 = X0.squeeze(0)
     plt.figure(figsize=(4.2, 4))
-    for i in range(1, n ** 2 + 1):
-        plt.subplot(n, n, i)
-        plt.imshow(model.gibbs(X0, 100), cmap=plt.cm.gray_r, interpolation='nearest')
+    for i in range(1, m ** 2 + 1):
+        plt.subplot(m, m, i)
+        plt.imshow(model.gibbs(X0, 500), cmap=plt.cm.gray_r, interpolation='nearest')
         plt.xticks(())
         plt.yticks(())
         print("SMP: " + str(i) + " images generated.")
     plt.suptitle('Regenerated numbers', fontsize=16)
     plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
     savefig("gibbs_%d_%d.png" % (n, k))
-    plt.show()
