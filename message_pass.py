@@ -6,24 +6,27 @@ from torch.utils.data import DataLoader
 
 class SparseMP():
 
-    def __init__(self, adj, local, row, col, lr=0.1, damping=1., eps=1e-16, epochs=100, max_iters=10, batch_size=1, device=torch.device("cpu")):
+    def __init__(self, adj, local, row, col, r2c, lr=0.1, damping=1.0, eps=1e-16, th=0.2, epochs=100, max_iters=10, batch_size=1, device=torch.device("cpu")):
         #torch.manual_seed(0)
         self.device = device
         self.max_iters = max_iters
         self.lr = lr
         self.damping = damping
         self.eps = eps
+        self.th = th
         self.epochs = epochs
         self.batch_size = batch_size
         self.adj = adj
         self.local = local
         self.row = row
         self.col = col
+        self.r2c = r2c
 
-    def train(self, train_set):
+
+    def train(self, train_set, sampler=None):
         """ Perform training for k-regular graph using loopy bp.
         """
-        train_loader = iter(DataLoader(train_set, batch_size=self.batch_size, shuffle=True, num_workers=1))
+        train_loader = iter(DataLoader(train_set, batch_size=self.batch_size, sampler=sampler, num_workers=1))
         i = 0
         while i < self.epochs:
             print("epoch %d" %(i))
@@ -55,11 +58,11 @@ class SparseMP():
         iters = 0
         while iters == 0 or (iters < self.max_iters and torch.max(torch.abs(message_new - message_old)) > self.eps):
             message_old = message_new.clone()
-            message = (torch.zeros(n, device=self.device).index_add_(0, row, message_old)[row] - message_old)[col]
+            message = (torch.zeros(n, device=self.device).index_add_(0, row, message_old)[row] - message_old)[self.r2c]
             message_new = torch.log((torch.exp(local[col] + adj + message) + 1) / (torch.exp(local[col] + message) + 1))
             message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
-        print("     %d iterations until convergence" % (iters))
+        print("     %d iterations until convergence, minimum difference %.3e" % (iters,  torch.max(torch.abs(message_new - message_old))))
         self.message_free = message_new
 
     def clamp_mp(self, data):
@@ -75,6 +78,7 @@ class SparseMP():
         col = self.col
         n = local.shape[0]
         clamp = data.shape[0]
+
         # Add interaction of clamped units to local biases based on data vectors
         local.index_add_(0, col[row < clamp], adj[row < clamp] * data[row[row < clamp]])
         # Set interaction of clamped units to 0
@@ -83,11 +87,10 @@ class SparseMP():
 
         message_old = self.message_free.unsqueeze(1).repeat(1, self.batch_size)
         message_new = message_old.clone()
-
         iters = 0
-        while iters == 0 or iters < self.max_iters and torch.max(torch.abs(message_new - message_old)) > self.eps:
+        while iters == 0 or (iters < self.max_iters and torch.max(torch.abs(message_new - message_old)) > self.eps):
             message_old = message_new.clone()
-            message = (torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_old)[row] - message_old)[col]
+            message = (torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_old)[row] - message_old)[self.r2c]
             message_new = torch.log((torch.exp(local[col] + adj + message) + 1) / (torch.exp(local[col] + message) + 1))
             message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
@@ -104,35 +107,37 @@ class SparseMP():
         local = self.local
         row = self.row
         col = self.col
+        r2c = self.r2c
         n = local.shape[0]
         clamp = data.shape[0]
 
         # Calculate marginal joint probability
-        message_free = self.message_free
-        msg_free = (torch.zeros(n, device=self.device).index_add_(0, row, message_free)[row] - message_free)
-        p_ij_marg = 1 / (torch.exp(-(msg_free + msg_free[col] + local[row] + local[col] + adj)) \
-        + torch.exp(-(msg_free + local[row] + adj)) + torch.exp(-(msg_free[col] + local[col] + adj)) + 1)
+        msg_free = self.message_free
+        sum_free = (torch.zeros(n, device=self.device).index_add_(0, row, msg_free)[row] - msg_free)
+        p_ij_marg = 1 / (torch.exp(-(sum_free + sum_free[r2c] + local[row] + local[col] + adj)) \
+        + torch.exp(-(sum_free + local[row] + adj)) + torch.exp(-(sum_free[r2c] + local[col] + adj)) + 1)
 
         # Calculate conditional joint probability
-        message_clamp = self.message_clamp
+        msg_clamp = self.message_clamp
         adj = self.adj.clone().unsqueeze(1).expand(-1, self.batch_size)
         local = local.unsqueeze(1).expand(-1, self.batch_size)
         # Add unit that sends signal of +-100 based on data
-        msg_sum = torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_clamp)
+        msg_sum = torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, msg_clamp)
         msg_sum[:clamp] += (data * 2 - 1) * 100
-        msg_clamp = msg_sum[row] - message_clamp
-        p_ij_cond = 1 / (torch.exp(-(msg_clamp + msg_clamp[col] + local[row] + local[col] + adj)) \
-        + torch.exp(-(msg_clamp + local[row] + adj)) + torch.exp(-(msg_clamp[col] + local[col] + adj)) + 1)
+        sum_clamp = msg_sum[row] - msg_clamp
+        p_ij_cond = 1 / (torch.exp(-(sum_clamp + sum_clamp[r2c] + local[row] + local[col] + adj)) \
+        + torch.exp(-(sum_clamp + local[row] + adj)) + torch.exp(-(sum_clamp[r2c] + local[col] + adj)) + 1)
         p_ij_cond = torch.sum(p_ij_cond, 1) / self.batch_size
 
         # Calculate marginal and condtional probabilities
-        p_i_marg = logistic(torch.zeros(n, device=self.device).index_add_(0, row, message_free))
-        p_i_cond = torch.sum(logistic(torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_clamp)), 1) / self.batch_size
+        p_i_marg = logistic(torch.zeros(n, device=self.device).index_add_(0, row, msg_free))
+        p_i_cond = torch.sum(logistic(torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, msg_clamp)), 1) / self.batch_size
 
         # Update model parameters
-        self.adj = torch.clamp(self.adj + self.lr * self.batch_size * (p_ij_cond - p_ij_marg), -0.95, 0.95)
-        print("     weights: " + str(self.adj[data.shape[0]]))
-        self.local = torch.clamp(self.local + self.lr * self.batch_size * (p_i_cond - p_i_marg), -0.95, 0.95)
+        th = self.th
+        self.adj = torch.clamp(self.adj + self.lr * self.batch_size * (p_ij_cond - p_ij_marg), -th, th)
+        print("     weights: " + str(self.adj))
+        self.local = torch.clamp(self.local + self.lr * self.batch_size * (p_i_cond - p_i_marg), -th, th)
 
     def gibbs(self, data, iters):
         """ Perform iters iterations of gibbs sampling, and return result.
