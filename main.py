@@ -23,7 +23,7 @@ if __name__ == "__main__":
         os.mkdir(root)
 
     # Generate random graph
-    gtype = GType.ER
+    gtype = GType.KR
     n, k = int(5e6), 5
     print("%s graph with %d nodes" % (gtype.name, n))
     lr, eps, th, epochs, batch_size, max_iters = 0.1, 1e-10, 0.4, 1000, 10, 20
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     print("     expected cycles of length <=%d per node: %.5f" % (cyc, cycles_expected(n, cyc, gtype) / n))
 
     # Use networkx for k-regular
-    G = nx.fast_gnp_random_graph(n=n, p=2*math.log(n)/2, seed=42)
+    G = nx.random_regular_graph(k, n)
     print("Graph connected? %r" % (nx.is_connected(G)))
     sparse_adj = nx.adjacency_matrix(G)
     row, col = sparse_adj.nonzero()
