@@ -12,8 +12,7 @@ import igraph
 import numpy as np
 import scipy.sparse as sp
 from message_pass import SparseMP
-from functools import reduce
-from random import random
+from itertools import chain
 from utils import *
 
 if __name__ == "__main__":
@@ -23,47 +22,36 @@ if __name__ == "__main__":
     if not os.path.exists(root):
         os.mkdir(root)
 
-    # Generate k-regular graph
-    gtype = GType.KR
-    #gtype = GType.ER
+    # Generate random graph
+    gtype = GType.ER
     n, k = int(5e6), 5
-    cyc = 16
-    print("     expected cycles of length <=%d per node: %.5f" % (cyc, cycles_expected(n, cyc, gtype) / n))
-    G = nx.random_regular_graph(k, n, seed=42)
-    # print("Graph connected? %r" % (nx.is_connected(G)))
-    # G = nx.fast_gnp_random_graph(n=n, p=2*math.log(n)/2, seed=42)
-
-    #G = igraph.Graph.Erdos_Renyi(n=n, p=2*math.log(n)/n)
-    # print("Graph connected? %r" % (G.is_connected()))
-    # G = igraph.Graph.K_Regular(n, k)
-    # min, max = 3, 10
-    # upper = 10
-    # y = np.zeros((max - min + 1) // 2)
-    # x = np.arange(min, max, 2)
-    # for k in x:
-    #     G = nx.fast_gnp_random_graph(n=n, p=k/n, seed=42)
-    #     lengths = np.fromiter((map(lambda x: len(x), nx.cycle_basis(G))), dtype=np.int)
-    #     _, counts = np.unique(lengths, return_counts=True)
-    #     y[(k - min) // 2] = np.sum(counts[:upper + 1])
-    #     print(y)
-    # plt.plot(x, y, '-o')
-    # plt.title("Cycles in graph of %d nodes" % (n))
-    # plt.xlabel("Degree (k)")
-    # plt.ylabel("Cycles of length <=%d" % (upper))
-    # savefig("cycles_%d_ER.png" % (n))
-    # plt.show()
+    print("%s graph with %d nodes" % (gtype.name, n))
     lr, eps, th, epochs, batch_size, max_iters = 0.1, 1e-10, 0.4, 1000, 10, 20
+    cyc = round(math.log(eps) / (math.log(th) + th - math.log(math.exp(th) + 1)))
+    print("     expected cycles of length <=%d per node: %.5f" % (cyc, cycles_expected(n, cyc, gtype) / n))
+
+    # Use networkx for k-regular
+    G = nx.fast_gnp_random_graph(n=n, p=2*math.log(n)/2, seed=42)
+    print("Graph connected? %r" % (nx.is_connected(G)))
     sparse_adj = nx.adjacency_matrix(G)
     row, col = sparse_adj.nonzero()
-    cr = dict(((row[x], col[x]), x) for x in range(col.shape[0]))
-    r2c = np.array([cr[x] for x in list(zip(col, row))])
-    r2c = torch.from_numpy(r2c).type(torch.LongTensor)
+    cr = dict(map(lambda x: ((row[x], col[x]), x), range(col.shape[0])))
+    r2c = torch.LongTensor(list(map(lambda x: cr[x], list(zip(col, row)))))
     row = torch.from_numpy(row).type(torch.LongTensor)
     col = torch.from_numpy(col).type(torch.LongTensor)
+
+    # Use igraph for erdos-renyi
+    # G = igraph.Graph.Erdos_Renyi(n=n, p=2*math.log(n)/n)
+    # print("     Graph connected? %r" % (G.is_connected()))
     # adj_list= G.get_adjlist()
-    # col = torch.LongTensor([item for sublist in adj_list for item in sublist])
-    # row_list = list(map(lambda x: x[0] * [x[1]], zip(list(map(lambda x: len(x), adj_list)), range(n))))
-    # row = torch.LongTensor([item for sublist in row_list for item in sublist])
+    # col_list = [item for sublist in adj_list for item in sublist]
+    # row_list = list(chain.from_iterable(map(lambda x: x[0] * [x[1]], zip(list(map(lambda x: len(x), adj_list)), range(n)))))
+    # cr = dict(map(lambda x: ((row_list[x], col_list[x]), x), range(len(col_list))))
+    # r2c = torch.LongTensor([cr[x] for x in list(zip(col_list, row_list))])
+    # r2c = torch.LongTensor(list(map(lambda x: cr[x], list(zip(col_list, row_list)))))
+    # row = torch.LongTensor(row_list)
+    # col = torch.LongTensor(col_list)
+
     if torch.cuda.is_available():
         row = row.cuda()
         col = col.cuda()
