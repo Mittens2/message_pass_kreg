@@ -1,5 +1,7 @@
 import torch
+import numpy as np
 import math
+import random
 from torch.utils.data.sampler import Sampler
 import timeit
 import os
@@ -27,12 +29,12 @@ def plotCycles(max_k, max_cyc):
     plt.ylabel("Cycles of length <=%d" % (max_cyc))
     savefig("cycles_%d_ER.png" % (n))
 
-def cycles_expected(n, c, gtype):
+def cycles_expected(n, k, c, gtype):
     if gtype == GType.ER:
-        f = lambda i: math.pow(2 * math.log(i), i) / (2 * i)
+        f = lambda i: math.pow(math.log(n), i) / (2 * i)
     else:
-        f = lambda i: math.pow(2, i) / (2 * i)
-    return sum(map(f, range(2, c + 1)))
+        f = lambda i: math.pow(k - 1, i) / (2 * i)
+    return sum(map(f, range(2, c + 1))) / n
 
 def logistic(x):
     return 1. / (1. + torch.exp(-x))
@@ -46,7 +48,7 @@ def time(func, *args):
     wrapped = wrapper(func, *args)
     return timeit.timeit(wrapped, number=1)
 
-def savefig(fname, verbose=True):
+def savefig(fname, gtype, verbose=True):
     path = os.path.join('.', FIGS_DIR, fname)
     plt.savefig(path)
     if verbose:
