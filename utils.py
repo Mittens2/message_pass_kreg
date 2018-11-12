@@ -48,18 +48,21 @@ def time(func, *args):
     wrapped = wrapper(func, *args)
     return timeit.timeit(wrapped, number=1)
 
-def savefig(fname, gtype, verbose=True):
-    path = os.path.join('.', FIGS_DIR, fname)
-    plt.savefig(path)
+def savefig(gtype, dims, verbose=True):
+    if gtype == GType.ER:
+        fname = os.path.join(FIGS_DIR, 'ER', '%d_gibbs' % dims)
+    else:
+        fname = os.path.join(FIGS_DIR, 'KR', '%d_%d_gibbs' % dims)
+    plt.savefig(fname)
     if verbose:
-        print("Figure saved as '{}'".format(path))
+        print("Figure saved as '{}'".format(fname))
 
 class subSampler(Sampler):
     def __init__(self, mask):
         self.mask = mask
 
     def __iter__(self):
-        return iter(range((torch.nonzero(self.mask).shape[0])))
+        return iter(torch.nonzero(self.mask).squeeze())
 
     def __len__(self):
         return len(self.mask)
