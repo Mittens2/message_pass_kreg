@@ -11,25 +11,24 @@ MODEL_DIR = 'data/model/'
 
 class SparseMP():
 
-    def __init__(self, gtype, dims, seed=42, load=False,
-                 lr=0.1, damping=0.1, eps=1e-16, th=0.2, epochs=100, max_iters=10, batch_size=1, device=torch.device("cpu")):
+    def __init__(self, gtype, dims, numbers, seed=42, load=False,
+                 lr=0.1, damping=0.1, eps=1e-16, th=0.2, epochs=100, max_iters=10, batch_size=1, lr_decay=2, valid_th=10, device=torch.device("cpu")):
         # Model parameters
         n, k = dims
         torch.manual_seed(seed)
         self.gtype = gtype
         self.dims = dims
+        self.numbers = len(numbers)
+        self.valid_counter = 0
+        self.lr_decay_epoch = 0
+        self.valid_th = valid_th
+        self.lr_decay = lr_decay
+        self.best_pseudo = -float('inf')
         self.device = device
 
         # Load model data
         if load:
-            if gtype == GType.ER:
-                fn_weights = os.path.join(MODEL_DIR, 'ER', '%d_weights.pt' % dims[0])
-                fn_adjecency = os.path.join(MODEL_DIR, 'ER', '%d_adjecency.pt' % dims[0])
-            else:
-                fn_weights = os.path.join(MODEL_DIR, 'KR', '%d_%d_weights.pt' % dims)
-                fn_adjecency = os.path.join(MODEL_DIR, 'KR', '%d_%d_adjecency.pt' % dims)
-            self.local, self.adj = torch.load(fn_weights)
-            self.row, self.col, self.r2c = torch.load(fn_adjecency)
+            self.load_params()
         # Initialize model data from scratch
         else:
             if gtype == GType.ER: # Use igraph for erdos-renyi
@@ -75,15 +74,31 @@ class SparseMP():
         self.epochs = epochs
         self.batch_size = batch_size
 
+    def load_params(self):
+        """Load model parameters
+        """
+        n, k = self.dims
+        numbers = self.numbers
+        if self.gtype == GType.ER:
+            fn_weights = os.path.join(MODEL_DIR, 'ER', '%d_%d_weights.pt' % (numbers, n))
+            fn_adjecency = os.path.join(MODEL_DIR, 'ER', '%d_adjecency.pt' % (numbers, n))
+        else:
+            fn_weights = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_weights.pt' % (numbers, n, k))
+            fn_adjecency = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_adjecency.pt' % (numbers, n, k))
+        self.local, self.adj = torch.load(fn_weights)
+        self.row, self.col, self.r2c = torch.load(fn_adjecency)
+
     def save_params(self):
         """Save model parameters
         """
+        n, k = self.dims
+        numbers = self.numbers
         if self.gtype == GType.ER:
-            fn_weights = os.path.join(MODEL_DIR, 'ER', '%d_weights.pt' % self.dims[0])
-            fn_adjecency = os.path.join(MODEL_DIR, 'ER', '%d_adjecency.pt' % self.dims[0])
+            fn_weights = os.path.join(MODEL_DIR, 'ER', '%d_%d_weights.pt' % (numbers, n))
+            fn_adjecency = os.path.join(MODEL_DIR, 'ER', '%d_adjecency.pt' % (numbers, n))
         else:
-            fn_weights = os.path.join(MODEL_DIR, 'KR', '%d_%d_weights.pt' % self.dims)
-            fn_adjecency = os.path.join(MODEL_DIR, 'KR', '%d_%d_adjecency.pt' % self.dims)
+            fn_weights = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_weights.pt' % (numbers, n, k))
+            fn_adjecency = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_adjecency.pt' % (numbers, n, k))
 
         torch.save((self.local, self.adj), fn_weights)
         torch.save((self.row, self.col, self.r2c), fn_adjecency)
@@ -91,6 +106,7 @@ class SparseMP():
     def train(self, train_set, sampler=None, save=False):
         """ Perform training using message passing for graphical model.
         """
+        pseudo_trend = []
         if torch.cuda.is_available():
             num_workers = 4
         else:
@@ -106,10 +122,9 @@ class SparseMP():
                 data = data.cuda()
             self.free_mp()
             self.clamp_mp(data)
-            self.update(data)
+            pseudo_trend += [self.update(data)]
             i += 1
-        if save:
-            self.save_params()
+        return pseudo_trend
 
     def free_mp(self):
         """ Unclamped message-passing for one mini-batch.
@@ -248,13 +263,29 @@ class SparseMP():
         th = self.th
         self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond - p_ij_marg), max=th)
         self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), max=th)
-        print("     pseudo: %.3g" % (torch.sum(torch.log(p_i_cond[:clamp]))))
+        pseudo_like = torch.sum(torch.log(p_i_cond[:clamp]))
+        print("     pseudo: %.3g" % (pseudo_like))
         print("     avg weight: %.3g" % (torch.sum(self.adj) / self.adj.shape[0]))
         print("     max weight: %.3g" % (torch.max(self.adj)))
         print("     min weight: %.3g" % (torch.min(self.adj)))
         print("     avg bias: %.3g" % (torch.sum(self.local) / self.local.shape[0]))
         print("     max bias: %.3g" % (torch.max(self.local)))
         print("     min bias: %.3g" % (torch.min(self.local)))
+        # adaptive learning rate
+        if pseudo_like > self.best_pseudo:
+            self.best_pseudo = pseudo_like
+            self.valid_counter = 0
+            self.save_params()
+        if  pseudo_like < self.best_pseudo:
+            self.valid_counter += 1
+            if self.valid_counter == self.valid_th:
+                self.lr_decay_epoch += 1
+                print("     pseudo-likelihood has not decrease in %d rounds, new learning rate: %.3g"
+                    % (self.valid_th, self.lr / 2))
+                self.lr /= 2
+                self.valid_counter = 0
+                self.load_params()
+        return pseudo_like
 
     def gibbs(self, iters, x=None):
         """ Perform iters iterations of gibbs sampling, and return result.

@@ -28,18 +28,19 @@ if __name__ == "__main__":
 
     # These parameters should be taken in via command line
     gtype = GType.KR
-    n, k = int(1e4), 5
-    load = True
-    train = False
+    numbers = [0, 1]
+    n, k = int(5e4), 5
+    load = False
+    train = True
     print("%s graph with %d nodes" % (gtype.name, n))
 
     # Initialize model
-    lr, eps, th, epochs, batch_size, max_iters = 0.1, 1e-6, 10.0, 100, 1, 200
+    lr, eps, th, epochs, batch_size, max_iters = 1.0, 1e-6, 5.0, 200, 1, 200
     if load:
-        model = SparseMP(gtype=gtype, dims = (n, k), load=True,
+        model = SparseMP(gtype=gtype, dims = (n, k), load=True, numbers=numbers,
             lr=lr, eps=eps, th=th, epochs=epochs, batch_size=batch_size, max_iters=max_iters, device=device)
     else:
-        model = SparseMP(gtype=gtype, dims = (n, k), load=False,
+        model = SparseMP(gtype=gtype, dims = (n, k), load=False, numbers=numbers,
             lr=lr, eps=eps, th=th, epochs=epochs, batch_size=batch_size, max_iters=max_iters, device=device)
 
     # Cycle statistics
@@ -48,26 +49,31 @@ if __name__ == "__main__":
     # Train model with sub-sampler
     if train:
         mask = torch.ones(len(train_set.train_labels), dtype=torch.uint8)
-        numbers = [3]
-        for num in numbers:
-            mask = mask | (train_set.train_labels == num)
-        sampler = subSampler(mask)
-        model.train(train_set=train_set, save=True, sampler=sampler)
-
+        sampler = subSampler(numbers, train_set)
+        pseudo_trend = model.train(train_set=train_set, save=True, sampler=sampler)
+        # Plot pseudo likelihood
+        plt.plot(np.arange(0, len(pseudo_trend)), pseudo_trend)
+        plt.xlabel('epoch')
+        plt.ylabel('pseudo likelihood')
+        title = '(%d, %d, %d) Pseudo likelihood trend' % (len(numbers), n, k)
+        plt.title(title)
+        plt.legend()
+        savefig(title, gtype)
+        plt.show()
     # Generate m samples from model
-    m = 2
-    samples = 10000
-    X0, _ = train_set[0]
-    X0 = X0.squeeze()
-    x = torch.round(torch.rand(n, device=device))
-    plt.figure(figsize=(4.2, 4))
-    for i in range(1, m ** 2 + 1):
-        plt.subplot(m, m, i)
-        x = model.gibbs(samples)
-        plt.imshow(x[:X0.view(-1).shape[0]].view(X0.shape[0], -1), cmap=plt.cm.gray_r, interpolation='nearest')
-        plt.xticks(())
-        plt.yticks(())
-        print("SMP: " + str(i) + " images generated.")
-    plt.suptitle('Regenerated numbers', fontsize=16)
-    plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
-    savefig(gtype, (n, k))
+    # m = 3
+    # samples = 100000
+    # X0, _ = train_set[0]
+    # X0 = X0.squeeze()
+    # x = torch.round(torch.rand(n, device=device))
+    # plt.figure(figsize=(4.2, 4))
+    # for i in range(1, m ** 2 + 1):
+    #     plt.subplot(m, m, i)
+    #     x = model.gibbs(samples)
+    #     plt.imshow(x[:X0.view(-1).shape[0]].view(X0.shape[0], -1), cmap=plt.cm.gray_r, interpolation='nearest')
+    #     plt.xticks(())
+    #     plt.yticks(())
+    #     print("SMP: " + str(i) + " images generated.")
+    # plt.suptitle('Regenerated numbers', fontsize=16)
+    # plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
+    # savefig("(%d, %d, %d)gibbs" % (len(numbers), n, k), gtype)
