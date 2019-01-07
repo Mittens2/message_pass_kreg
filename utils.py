@@ -13,6 +13,7 @@ FIGS_DIR = 'figs'
 class GType(Enum):
     KR = 1
     ER = 2
+    TR = 3
 
 def plotCycles(max_k, max_cyc):
     y = np.zeros(max_k - 3)

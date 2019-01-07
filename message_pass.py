@@ -4,6 +4,7 @@ import numpy as np
 import math
 import networkx as nx
 import igraph
+from itertools import chain
 from utils import logistic, time, GType
 from torch.utils.data import DataLoader
 
@@ -12,16 +13,14 @@ MODEL_DIR = 'data/model/'
 class SparseMP():
 
     def __init__(self, gtype, dims, numbers, seed=42, load=False,
-                 lr=0.1, damping=0.1, eps=1e-16, th=0.2, epochs=100, max_iters=10, batch_size=1, lr_decay=2, valid_th=10, device=torch.device("cpu")):
+                 lr=0.1, damping=0.5, eps=1e-16, th=0.2, epochs=100, max_iters=10, batch_size=1, lr_decay=2,
+                 device=torch.device("cpu")):
         # Model parameters
         n, k = dims
         torch.manual_seed(seed)
         self.gtype = gtype
         self.dims = dims
         self.numbers = len(numbers)
-        self.valid_counter = 0
-        self.lr_decay_epoch = 0
-        self.valid_th = valid_th
         self.lr_decay = lr_decay
         self.best_pseudo = -float('inf')
         self.device = device
@@ -42,8 +41,11 @@ class SparseMP():
                 r2c = torch.LongTensor(list(map(lambda x: cr[x], list(zip(col_list, row_list)))))
                 row = torch.LongTensor(row_list)
                 col = torch.LongTensor(col_list)
-            else:
-                G = nx.random_regular_graph(k, n)
+            else: # Use nx for tree (exact inference test) or K-regular
+                if gtype == GType.KR:
+                    G = nx.random_regular_graph(k, n)
+                else:
+                    G = nx.full_rary_tree(r=k, n=n)
                 print("Graph connected? %r" % (nx.is_connected(G)))
                 sparse_adj = nx.adjacency_matrix(G)
                 row, col = sparse_adj.nonzero()
@@ -55,9 +57,12 @@ class SparseMP():
             if torch.cuda.is_available():
                 row = row.cuda()
                 col = col.cuda()
+                r2c = r2c.cuda()
 
-            adj = (torch.rand(row.shape[0], device=device) - 0.5) * (th / 10)
-            local = (torch.rand(n, device=device) - 0.5) * (th / 10)
+            # Normally distributed weights (look at RBM literature)
+            adj = torch.zeros(row.shape[0], device=device)
+            # adj = torch.ones(row.shape[0], device=device)
+            local = torch.zeros(n, device=device)
 
             self.adj = adj
             self.local = local
@@ -81,49 +86,80 @@ class SparseMP():
         numbers = self.numbers
         if self.gtype == GType.ER:
             fn_weights = os.path.join(MODEL_DIR, 'ER', '%d_%d_weights.pt' % (numbers, n))
-            fn_adjecency = os.path.join(MODEL_DIR, 'ER', '%d_adjecency.pt' % (numbers, n))
+            fn_adjecency = os.path.join(MODEL_DIR, 'ER', '%d_%d_adjecency.pt' % (numbers, n))
         else:
             fn_weights = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_weights.pt' % (numbers, n, k))
             fn_adjecency = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_adjecency.pt' % (numbers, n, k))
-        self.local, self.adj = torch.load(fn_weights)
-        self.row, self.col, self.r2c = torch.load(fn_adjecency)
+        local, adj = torch.load(fn_weights)
+        row, col, r2c = torch.load(fn_adjecency)
+        if torch.cuda.is_available():
+            local = local.cuda()
+            adj = adj.cuda()
+            row = row.cuda()
+            col = col.cuda()
+            r2c = r2c.cuda()
+
+        self.adj = adj
+        self.local = local
+        self.row = row
+        self.col = col
+        self.r2c = r2c
+
 
     def save_params(self):
         """Save model parameters
         """
         n, k = self.dims
         numbers = self.numbers
+        local = self.local
+        adj = self.adj
+        row = self.row
+        col = self.col
+        r2c = self.r2c
+        if torch.cuda.is_available():
+             local = local.to(torch.device("cpu"))
+             adj = adj.to(torch.device("cpu"))
+             row = row.to(torch.device("cpu"))
+             col = col.to(torch.device("cpu"))
+             r2c = r2c.to(torch.device("cpu"))
+
         if self.gtype == GType.ER:
             fn_weights = os.path.join(MODEL_DIR, 'ER', '%d_%d_weights.pt' % (numbers, n))
-            fn_adjecency = os.path.join(MODEL_DIR, 'ER', '%d_adjecency.pt' % (numbers, n))
+            fn_adjecency = os.path.join(MODEL_DIR, 'ER', '%d_%d_adjecency.pt' % (numbers, n))
         else:
             fn_weights = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_weights.pt' % (numbers, n, k))
             fn_adjecency = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_adjecency.pt' % (numbers, n, k))
 
-        torch.save((self.local, self.adj), fn_weights)
-        torch.save((self.row, self.col, self.r2c), fn_adjecency)
+        torch.save((local, adj), fn_weights)
+        torch.save((row, col, r2c), fn_adjecency)
 
     def train(self, train_set, sampler=None, save=False):
         """ Perform training using message passing for graphical model.
         """
-        pseudo_trend = []
         if torch.cuda.is_available():
             num_workers = 4
         else:
             num_workers = 0
         train_loader = iter(DataLoader(train_set, batch_size=self.batch_size, sampler=sampler, num_workers=num_workers))
         i = 0
-        while i < self.epochs:
+        for i in range(self.epochs):
+            pseudo_trend = []
             print("epoch %d" %(i))
-            data, label = next(train_loader)
-            data = data.squeeze()
-            data = torch.round(torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1))
-            if torch.cuda.is_available():
-                data = data.cuda()
-            self.free_mp()
-            self.clamp_mp(data)
-            pseudo_trend += [self.update(data)]
-            i += 1
+            for j, (data, label) in enumerate(train_loader):
+                print("batch %d" %(j))
+                data = data.squeeze()
+                data = torch.round(torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1))
+                if torch.cuda.is_available():
+                    data = data.cuda()
+                self.free_mp()
+                self.clamp_mp(data)
+                pseudo_trend += [self.update(data)]
+                print("     pseudo-like: %.3g \n" % (sum(pseudo_trend) / (j + 1)))
+            pseudo_like = sum(pseudo_trend) / len(train_set)
+            if pseudo_like > self.best_pseudo:
+                self.best_pseudo = pseudo_like
+                self.save_params()
+            self.lr *= self.lr_decay
         return pseudo_trend
 
     def free_mp(self):
@@ -143,11 +179,13 @@ class SparseMP():
         while iters == 0 or (iters < self.max_iters and torch.max(torch.abs(message_new - message_old)) > self.eps):
             message_old = message_new.clone()
             message = (torch.zeros(n, device=self.device).index_add_(0, row, message_old)[row] - message_old)[self.r2c]
-            message_new = torch.log((torch.exp(local[col] + adj + message) + 1) / (torch.exp(local[col] + message) + 1))
+            message = torch.clamp(message, max=30)
+            message_new = local[row] + torch.log(torch.exp(local[col] + adj + message) + 1) - torch.log(torch.exp(local[col] + message) + 1)
             message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
         print("     %d iterations until convergence, minimum difference %.3e" % (iters,  torch.max(torch.abs(message_new - message_old))))
         self.message_free = message_new
+        return logistic(torch.zeros(n, device=self.device).index_add_(0, row, message_new) + local)
 
     def clamp_mp(self, data):
         """ Clamped message-passing for one mini-batch.
@@ -175,7 +213,9 @@ class SparseMP():
         while iters == 0 or (iters < self.max_iters and torch.max(torch.abs(message_new - message_old)) > self.eps):
             message_old = message_new.clone()
             message = (torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_old)[row] - message_old)[self.r2c]
-            message_new = torch.log((torch.exp(local[col] + adj + message) + 1) / (torch.exp(local[col] + message) + 1))
+            # print(torch.max(message))
+            message = torch.clamp(message, max=30)
+            message_new = local[row] + torch.log(torch.exp(local[col] + adj + message) + 1) - torch.log(torch.exp(local[col] + message) + 1)
             message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
         print("     %d iterations until convergence, minimum difference %.3e" % (iters,  torch.max(torch.abs(message_new - message_old))))
@@ -240,7 +280,7 @@ class SparseMP():
         msg_free = self.message_free
         sum_free = (torch.zeros(n, device=self.device).index_add_(0, row, msg_free)[row] - msg_free)
         p_ij_marg = 1 / (torch.exp(-(sum_free + sum_free[r2c] + local[row] + local[col] + adj)) \
-        + torch.exp(-(sum_free + local[row])) + torch.exp(-(sum_free[r2c] + local[col])) + 1)
+        + torch.exp(-(sum_free + local[row] + adj)) + torch.exp(-(sum_free[r2c] + local[col] + adj)) + 1)
 
         #Calculate conditional joint probability
         msg_clamp = self.message_clamp
@@ -248,43 +288,27 @@ class SparseMP():
         local = local.unsqueeze(1).expand(-1, self.batch_size)
         # Add unit that sends signal of +-100 based on data
         msg_sum = torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, msg_clamp)
-        msg_sum[:clamp] += (data * 2 - 1) * 100
+        msg_sum[:clamp] += (data * 2 - 1) * 10
         sum_clamp = msg_sum[row] - msg_clamp
         p_ij_cond = 1 / (torch.exp(-(sum_clamp + sum_clamp[r2c] + local[row] + local[col] + adj)) \
-        + torch.exp(-(sum_clamp + local[row])) + torch.exp(-(sum_clamp[r2c] + local[col])) + 1)
+        + torch.exp(-(sum_clamp + local[row] + adj)) + torch.exp(-(sum_clamp[r2c] + local[col] + adj)) + 1)
         p_ij_cond = torch.sum(p_ij_cond, 1) / self.batch_size
 
         #Calculate marginal and condtional probabilities
         # This is super slow for some reason
         p_i_marg = logistic(torch.zeros(n, device=self.device).index_add_(0, row, message_free) + self.local)
         p_i_cond = torch.sum(logistic(torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_clamp) + local), 1) / self.batch_size
-
         #Update model parameters
         th = self.th
-        self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond - p_ij_marg), max=th)
-        self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), max=th)
+        self.adj = torch.clamp(self.adj - self.lr * (p_ij_cond - p_ij_marg), max=th)
+        self.local = torch.clamp(self.local - self.lr * (p_i_cond - p_i_marg), max=th)
         pseudo_like = torch.sum(torch.log(p_i_cond[:clamp]))
-        print("     pseudo: %.3g" % (pseudo_like))
         print("     avg weight: %.3g" % (torch.sum(self.adj) / self.adj.shape[0]))
         print("     max weight: %.3g" % (torch.max(self.adj)))
         print("     min weight: %.3g" % (torch.min(self.adj)))
         print("     avg bias: %.3g" % (torch.sum(self.local) / self.local.shape[0]))
         print("     max bias: %.3g" % (torch.max(self.local)))
         print("     min bias: %.3g" % (torch.min(self.local)))
-        # adaptive learning rate
-        if pseudo_like > self.best_pseudo:
-            self.best_pseudo = pseudo_like
-            self.valid_counter = 0
-            self.save_params()
-        if  pseudo_like < self.best_pseudo:
-            self.valid_counter += 1
-            if self.valid_counter == self.valid_th:
-                self.lr_decay_epoch += 1
-                print("     pseudo-likelihood has not decrease in %d rounds, new learning rate: %.3g"
-                    % (self.valid_th, self.lr / 2))
-                self.lr /= 2
-                self.valid_counter = 0
-                self.load_params()
         return pseudo_like
 
     def gibbs(self, iters, x=None):
@@ -306,10 +330,10 @@ class SparseMP():
         i = 0
         while i < iters:
             prob = logistic(x * (torch.zeros(n, device=self.device).index_add_(0, row, adj * x[col]) + local))
-            # sample = torch.rand(n, device=self.device)
-            # x[prob > sample] = 1
-            # x[prob < sample] = 0
-            x = torch.round(prob)
+            sample = torch.rand(n, device=self.device)
+            x[prob > sample] = 0
+            x[prob < sample] = 1
+            # x = torch.round(prob)
             i += 1
         # Return the state of the visible units
         return x

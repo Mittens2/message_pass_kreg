@@ -1,8 +1,6 @@
 #!/bin/bash
 #SBATCH --account=def-siamakx  
-#!/bin/bash
-#SBATCH --gres=gpu:1       
-#SBATCH --cpus-per-task=6  
+#SBATCH --gres=gpu:1
 #SBATCH --mem=32000
 #SBATCH --time=0-02:00
 #SBATCH --output=%N-%j.out

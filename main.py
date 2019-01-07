@@ -1,6 +1,8 @@
 import torch
 import torchvision
 import os
+import sys
+sys.path.insert(0, './exact')
 import numpy as np
 import torchvision.datasets as dset
 import torchvision.transforms as transforms
@@ -9,8 +11,10 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse as sp
+from brute_force import BruteForceInference
 from message_pass import SparseMP
 from itertools import chain
+from ex_utils import *
 from utils import *
 
 MODEL_DIR = 'data/model/'
@@ -27,21 +31,21 @@ if __name__ == "__main__":
     train_set = dset.MNIST(root=root, train=True, transform=trans, download=True)
 
     # These parameters should be taken in via command line
-    gtype = GType.KR
-    numbers = [0, 1]
-    n, k = int(5e4), 5
-    load = False
-    train = True
+    gtype = GType.ER
+    numbers = list(range(10))
+    n, k = int(5e5), 10
+    load, train, plot, exact = False, True, True, False
+
     print("%s graph with %d nodes" % (gtype.name, n))
 
     # Initialize model
-    lr, eps, th, epochs, batch_size, max_iters = 1.0, 1e-6, 5.0, 200, 1, 200
+    lr, lr_decay, eps, th, epochs, batch_size, max_iters = 0.1, 0.1, 1e-3, 5.0, 3, 50, 200
     if load:
         model = SparseMP(gtype=gtype, dims = (n, k), load=True, numbers=numbers,
-            lr=lr, eps=eps, th=th, epochs=epochs, batch_size=batch_size, max_iters=max_iters, device=device)
+            lr=lr, lr_decay=lr_decay, eps=eps, th=th, epochs=epochs, batch_size=batch_size, max_iters=max_iters, device=device)
     else:
         model = SparseMP(gtype=gtype, dims = (n, k), load=False, numbers=numbers,
-            lr=lr, eps=eps, th=th, epochs=epochs, batch_size=batch_size, max_iters=max_iters, device=device)
+            lr=lr, lr_decay=lr_decay, eps=eps, th=th, epochs=epochs, batch_size=batch_size, max_iters=max_iters, device=device)
 
     # Cycle statistics
     # print("     expected cycles of length <=%d per node: %.3f" % (cyc, cycles_expected(n, k, cyc, gtype)))
@@ -61,19 +65,35 @@ if __name__ == "__main__":
         savefig(title, gtype)
         plt.show()
     # Generate m samples from model
-    # m = 3
-    # samples = 100000
-    # X0, _ = train_set[0]
-    # X0 = X0.squeeze()
-    # x = torch.round(torch.rand(n, device=device))
-    # plt.figure(figsize=(4.2, 4))
-    # for i in range(1, m ** 2 + 1):
-    #     plt.subplot(m, m, i)
-    #     x = model.gibbs(samples)
-    #     plt.imshow(x[:X0.view(-1).shape[0]].view(X0.shape[0], -1), cmap=plt.cm.gray_r, interpolation='nearest')
-    #     plt.xticks(())
-    #     plt.yticks(())
-    #     print("SMP: " + str(i) + " images generated.")
-    # plt.suptitle('Regenerated numbers', fontsize=16)
-    # plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
-    # savefig("(%d, %d, %d)gibbs" % (len(numbers), n, k), gtype)
+    if plot:
+        m = 2
+        samples = 100000
+        X0, _ = train_set[0]
+        X0 = X0.squeeze()
+        x = torch.round(torch.rand(n, device=device))
+        plt.figure(figsize=(4.2, 4))
+        for i in range(1, m ** 2 + 1):
+            plt.subplot(m, m, i)
+            x = model.gibbs(samples)
+            # x = model.free_mp()
+            plt.imshow(x[:X0.view(-1).shape[0]].view(X0.shape[0], -1), cmap=plt.cm.gray_r, interpolation='nearest')
+            plt.xticks(())
+            plt.yticks(())
+            print("SMP: " + str(i) + " images generated.")
+        plt.suptitle('Regenerated numbers', fontsize=16)
+        plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
+        savefig("(%d, %d, %d)gibbs" % (len(numbers), n, k), gtype)
+
+    if exact:
+        # Get marginals using message passing
+        adj = np.zeros((n, n))
+        # Non-zero entries of adjacency matrix
+        row = model.row.numpy()
+        col = model.col.numpy()
+        adj[row, col] = 1
+        bfi = BruteForceInference(adj, verbosity=2)
+        marg_mp = model.free_mp()
+        marg_ex = bfi.get_marginal(list(range(0, n)))
+        print(marg_mp)
+        print(marg_ex)
+        # Get marginals using exact inference
