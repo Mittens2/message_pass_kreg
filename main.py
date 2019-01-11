@@ -12,6 +12,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import scipy.sparse as sp
 from brute_force import BruteForceInference
+from clique_tree import CliqueTreeInference
 from message_pass import SparseMP
 from itertools import chain
 from ex_utils import *
@@ -31,15 +32,17 @@ if __name__ == "__main__":
     train_set = dset.MNIST(root=root, train=True, transform=trans, download=True)
 
     # These parameters should be taken in via command line
-    gtype = GType.ER
-    numbers = list(range(10))
-    n, k = int(5e5), 10
-    load, train, plot, exact = False, True, True, False
+    gtype = GType.TR
+    # numbers = list(range(10))
+    numbers = [0]
+    # n, k = int(1e4), 10
+    n, k = 10, 2
+    load, train, plot, exact = False, False, False, True
 
     print("%s graph with %d nodes" % (gtype.name, n))
 
     # Initialize model
-    lr, lr_decay, eps, th, epochs, batch_size, max_iters = 0.1, 0.1, 1e-3, 5.0, 3, 50, 200
+    lr, lr_decay, eps, th, epochs, batch_size, max_iters = 0.2, 0.1, 1e-5, 5.0, 1, 3, 200
     if load:
         model = SparseMP(gtype=gtype, dims = (n, k), load=True, numbers=numbers,
             lr=lr, lr_decay=lr_decay, eps=eps, th=th, epochs=epochs, batch_size=batch_size, max_iters=max_iters, device=device)
@@ -67,15 +70,15 @@ if __name__ == "__main__":
     # Generate m samples from model
     if plot:
         m = 2
-        samples = 100000
+        samples = 10000
         X0, _ = train_set[0]
         X0 = X0.squeeze()
         x = torch.round(torch.rand(n, device=device))
         plt.figure(figsize=(4.2, 4))
         for i in range(1, m ** 2 + 1):
             plt.subplot(m, m, i)
-            x = model.gibbs(samples)
-            # x = model.free_mp()
+            # x = model.gibbs(samples)
+            x = model.free_mp()
             plt.imshow(x[:X0.view(-1).shape[0]].view(X0.shape[0], -1), cmap=plt.cm.gray_r, interpolation='nearest')
             plt.xticks(())
             plt.yticks(())
@@ -86,14 +89,17 @@ if __name__ == "__main__":
 
     if exact:
         # Get marginals using message passing
-        adj = np.zeros((n, n))
         # Non-zero entries of adjacency matrix
         row = model.row.numpy()
         col = model.col.numpy()
+        adj = np.zeros((n, n))
+        print(row)
+        print(col)
         adj[row, col] = 1
-        bfi = BruteForceInference(adj, verbosity=2)
+        cti = CliqueTreeInference(adj, verbosity=1)
+        # bfi = BruteForceInference(adj, verbosity=2)
         marg_mp = model.free_mp()
-        marg_ex = bfi.get_marginal(list(range(0, n)))
+        marg_ex = cti.get_marginal(list(range(0, n)))
         print(marg_mp)
         print(marg_ex)
         # Get marginals using exact inference

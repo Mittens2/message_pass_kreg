@@ -45,7 +45,7 @@ class SparseMP():
                 if gtype == GType.KR:
                     G = nx.random_regular_graph(k, n)
                 else:
-                    G = nx.full_rary_tree(r=k, n=n)
+                    G = nx.star_graph(n=n-1)
                 print("Graph connected? %r" % (nx.is_connected(G)))
                 sparse_adj = nx.adjacency_matrix(G)
                 row, col = sparse_adj.nonzero()
@@ -60,9 +60,10 @@ class SparseMP():
                 r2c = r2c.cuda()
 
             # Normally distributed weights (look at RBM literature)
-            adj = torch.zeros(row.shape[0], device=device)
-            # adj = torch.ones(row.shape[0], device=device)
+            adj = torch.ones(row.shape[0], device=device)
+            # adj = torch.zeros(row.shape[0], device=device)
             local = torch.zeros(n, device=device)
+
 
             self.adj = adj
             self.local = local
@@ -145,7 +146,9 @@ class SparseMP():
         for i in range(self.epochs):
             pseudo_trend = []
             print("epoch %d" %(i))
-            for j, (data, label) in enumerate(train_loader):
+            # for j, (data, label) in enumerate(train_loader):
+            for j in range(500):
+                data, label = next(train_loader)
                 print("batch %d" %(j))
                 data = data.squeeze()
                 data = torch.round(torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1))
@@ -213,7 +216,6 @@ class SparseMP():
         while iters == 0 or (iters < self.max_iters and torch.max(torch.abs(message_new - message_old)) > self.eps):
             message_old = message_new.clone()
             message = (torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_old)[row] - message_old)[self.r2c]
-            # print(torch.max(message))
             message = torch.clamp(message, max=30)
             message_new = local[row] + torch.log(torch.exp(local[col] + adj + message) + 1) - torch.log(torch.exp(local[col] + message) + 1)
             message_new = message_new * self.damping + message_old * (1 - self.damping)
@@ -300,8 +302,8 @@ class SparseMP():
         p_i_cond = torch.sum(logistic(torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_clamp) + local), 1) / self.batch_size
         #Update model parameters
         th = self.th
-        self.adj = torch.clamp(self.adj - self.lr * (p_ij_cond - p_ij_marg), max=th)
-        self.local = torch.clamp(self.local - self.lr * (p_i_cond - p_i_marg), max=th)
+        self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond - p_ij_marg), max=th)
+        self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), max=th)
         pseudo_like = torch.sum(torch.log(p_i_cond[:clamp]))
         print("     avg weight: %.3g" % (torch.sum(self.adj) / self.adj.shape[0]))
         print("     max weight: %.3g" % (torch.max(self.adj)))
@@ -331,9 +333,9 @@ class SparseMP():
         while i < iters:
             prob = logistic(x * (torch.zeros(n, device=self.device).index_add_(0, row, adj * x[col]) + local))
             sample = torch.rand(n, device=self.device)
-            x[prob > sample] = 0
-            x[prob < sample] = 1
-            # x = torch.round(prob)
+            # x[prob > sample] = 0
+            # x[prob < sample] = 1
+            x = torch.round(prob)
             i += 1
         # Return the state of the visible units
         return x
