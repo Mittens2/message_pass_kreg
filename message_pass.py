@@ -60,8 +60,8 @@ class SparseMP():
                 r2c = r2c.cuda()
 
             # Normally distributed weights (look at RBM literature)
-            adj = torch.ones(row.shape[0], device=device)
-            # adj = torch.zeros(row.shape[0], device=device)
+            # adj = torch.ones(row.shape[0], device=device)
+            adj = torch.zeros(row.shape[0], device=device)
             local = torch.zeros(n, device=device)
 
 
@@ -134,7 +134,7 @@ class SparseMP():
         torch.save((local, adj), fn_weights)
         torch.save((row, col, r2c), fn_adjecency)
 
-    def train(self, train_set, sampler=None, save=False):
+    def train(self, train_set, sampler=None, save=True):
         """ Perform training using message passing for graphical model.
         """
         if torch.cuda.is_available():
@@ -143,26 +143,28 @@ class SparseMP():
             num_workers = 0
         train_loader = iter(DataLoader(train_set, batch_size=self.batch_size, sampler=sampler, num_workers=num_workers))
         i = 0
+        pseudo_trend = []
         for i in range(self.epochs):
-            pseudo_trend = []
+            pseudo_epoch = []
             print("epoch %d" %(i))
-            # for j, (data, label) in enumerate(train_loader):
-            for j in range(500):
-                data, label = next(train_loader)
+            for j, (data, label) in enumerate(train_loader):
+            # for j in range(500):
                 print("batch %d" %(j))
+                # data, label = next(train_loader)
                 data = data.squeeze()
                 data = torch.round(torch.transpose(data.view(-1, data.shape[1] ** 2), 0, 1))
                 if torch.cuda.is_available():
                     data = data.cuda()
                 self.free_mp()
                 self.clamp_mp(data)
-                pseudo_trend += [self.update(data)]
-                print("     pseudo-like: %.3g \n" % (sum(pseudo_trend) / (j + 1)))
-            pseudo_like = sum(pseudo_trend) / len(train_set)
-            if pseudo_like > self.best_pseudo:
-                self.best_pseudo = pseudo_like
-                self.save_params()
+                pseudo_epoch += [self.update(data)]
+                print("     pseudo-like: %.3g \n" % (sum(pseudo_epoch) / (j + 1)))
+            # pseudo_like = sum(pseudo_trend) / len(train_set)
+            # if pseudo_like > self.best_pseudo:
+                # self.best_pseudo = pseudo_like
+            self.save_params()
             self.lr *= self.lr_decay
+            pseudo_trend += pseudo_epoch
         return pseudo_trend
 
     def free_mp(self):
@@ -182,8 +184,9 @@ class SparseMP():
         while iters == 0 or (iters < self.max_iters and torch.max(torch.abs(message_new - message_old)) > self.eps):
             message_old = message_new.clone()
             message = (torch.zeros(n, device=self.device).index_add_(0, row, message_old)[row] - message_old)[self.r2c]
-            message = torch.clamp(message, max=30)
-            message_new = local[row] + torch.log(torch.exp(local[col] + adj + message) + 1) - torch.log(torch.exp(local[col] + message) + 1)
+            message = torch.clamp(message, max=10)
+            message_new = local[row] + torch.log(torch.exp(local[col] + adj + message) + 1)
+            message_new -= torch.log(torch.exp(local[col] + message) + 1)
             message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
         print("     %d iterations until convergence, minimum difference %.3e" % (iters,  torch.max(torch.abs(message_new - message_old))))
@@ -216,8 +219,9 @@ class SparseMP():
         while iters == 0 or (iters < self.max_iters and torch.max(torch.abs(message_new - message_old)) > self.eps):
             message_old = message_new.clone()
             message = (torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_old)[row] - message_old)[self.r2c]
-            message = torch.clamp(message, max=30)
-            message_new = local[row] + torch.log(torch.exp(local[col] + adj + message) + 1) - torch.log(torch.exp(local[col] + message) + 1)
+            message = torch.clamp(message, max=10)
+            message_new = local[row] + torch.log(torch.exp(local[col] + adj + message) + 1)
+            message_new -= torch.log(torch.exp(local[col] + message) + 1)
             message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
         print("     %d iterations until convergence, minimum difference %.3e" % (iters,  torch.max(torch.abs(message_new - message_old))))
