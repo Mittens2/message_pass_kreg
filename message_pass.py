@@ -61,7 +61,8 @@ class SparseMP():
 
             # Normally distributed weights (look at RBM literature)
             # adj = torch.ones(row.shape[0], device=device)
-            adj = torch.zeros(row.shape[0], device=device)
+            # adj = torch.zeros(row.shape[0], device=device)
+            adj =torch.rand(row.shape[0], device=device)
             local = torch.zeros(n, device=device)
 
 
@@ -148,7 +149,7 @@ class SparseMP():
             pseudo_epoch = []
             print("epoch %d" %(i))
             for j, (data, label) in enumerate(train_loader):
-            # for j in range(500):
+            # for j in range(300):
                 print("batch %d" %(j))
                 # data, label = next(train_loader)
                 data = data.squeeze()
@@ -158,10 +159,10 @@ class SparseMP():
                 self.free_mp()
                 self.clamp_mp(data)
                 pseudo_epoch += [self.update(data)]
-                print("     pseudo-like: %.3g \n" % (sum(pseudo_epoch) / (j + 1)))
-            # pseudo_like = sum(pseudo_trend) / len(train_set)
-            # if pseudo_like > self.best_pseudo:
-                # self.best_pseudo = pseudo_like
+                print("     epoch pseudo-like: %.3g \n" % (sum(pseudo_epoch) / (j + 1)))
+            pseudo_like = sum(pseudo_epoch) / len(train_set)
+            if pseudo_like > self.best_pseudo:
+                self.best_pseudo = pseudo_like
             self.save_params()
             self.lr *= self.lr_decay
             pseudo_trend += pseudo_epoch
@@ -185,7 +186,8 @@ class SparseMP():
             message_old = message_new.clone()
             message = (torch.zeros(n, device=self.device).index_add_(0, row, message_old)[row] - message_old)[self.r2c]
             message = torch.clamp(message, max=10)
-            message_new = local[row] + torch.log(torch.exp(local[col] + adj + message) + 1)
+            message_new = local[row]
+            message_new += torch.log(torch.exp(local[col] + adj + message) + 1)
             message_new -= torch.log(torch.exp(local[col] + message) + 1)
             message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
@@ -200,7 +202,7 @@ class SparseMP():
         data : array-like, shape (n_data ** 2, n_batch)
             The data for current epoch, used to clamp visible units.
         """
-        adj = self.adj.unsqueeze(1).expand(-1, self.batch_size)
+        adj = self.adj.clone().unsqueeze(1).expand(-1, self.batch_size)
         local = self.local.unsqueeze(1).expand(-1, self.batch_size)
         row = self.row
         col = self.col
@@ -220,43 +222,13 @@ class SparseMP():
             message_old = message_new.clone()
             message = (torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_old)[row] - message_old)[self.r2c]
             message = torch.clamp(message, max=10)
-            message_new = local[row] + torch.log(torch.exp(local[col] + adj + message) + 1)
+            message_new = local[row]
+            message_new += torch.log(torch.exp(local[col] + adj + message) + 1)
             message_new -= torch.log(torch.exp(local[col] + message) + 1)
             message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
         print("     %d iterations until convergence, minimum difference %.3e" % (iters,  torch.max(torch.abs(message_new - message_old))))
         self.message_clamp = message_new
-
-    def joint(self, x, message, data=None):
-        n = self.dims[0]
-        row = self.row
-        col = self.col
-        r2c = self.r2c
-        if len(message.shape) > 1:
-            adj = self.adj.unsqueeze(1).expand(-1, self.batch_size)
-            local = self.local.unsqueeze(1).expand(-1, self.batch_size)
-            x = x.unsqueeze(1).expand(-1, self.batch_size)
-            sum_message = torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message)
-            sum_message[:data.shape[0]] += (data * 2 - 1) * 100
-            p_i = logistic(torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message) + local)
-        else:
-            adj = self.adj
-            local = self.local
-            sum_message = torch.zeros(n, device=self.device).index_add_(0, row, message)
-            p_i = logistic(torch.zeros(n, device=self.device).index_add_(0, row, message) + local)
-
-        sum_message = sum_message[row] - message
-        # Calculate the joint probability over each factor, first calc numerator based on the state of the units
-        num = torch.exp(
-            (sum_message + local[row]) * x[row] + (sum_message[r2c] + local[col]) * x[col] + (adj * x[row] * x[col]))
-        # Calculate the denominator, all combinations of x_i, x_j states
-        den =  torch.exp(sum_message + sum_message[r2c] + local[row] + local[col] + adj) \
-        + torch.exp(sum_message + local[row]) + torch.exp(sum_message[r2c] + local[col]) + 1
-        p_ij = num / den
-
-
-        return p_ij, p_i
-
 
     def update(self, data):
         """ Update of model parameters.
@@ -275,13 +247,6 @@ class SparseMP():
         message_clamp = self.message_clamp
         n = self.dims[0]
 
-        # Calculate marginal joint probability
-        # New with external method
-        # p_ij_marg, p_i_marg = self.joint(x=torch.ones(n, device=self.device), message=message_free)
-        # p_ij_cond, p_i_cond = self.joint(x=torch.ones(n, device=self.device), message=message_clamp, data=data)
-        # p_ij_cond = torch.sum(p_ij_cond, 1) / self.batch_size
-        # p_i_cond = torch.sum(p_i_cond, 1) / self.batch_size
-
         #Old without external
         msg_free = self.message_free
         sum_free = (torch.zeros(n, device=self.device).index_add_(0, row, msg_free)[row] - msg_free)
@@ -298,23 +263,34 @@ class SparseMP():
         sum_clamp = msg_sum[row] - msg_clamp
         p_ij_cond = 1 / (torch.exp(-(sum_clamp + sum_clamp[r2c] + local[row] + local[col] + adj)) \
         + torch.exp(-(sum_clamp + local[row] + adj)) + torch.exp(-(sum_clamp[r2c] + local[col] + adj)) + 1)
-        p_ij_cond = torch.sum(p_ij_cond, 1) / self.batch_size
 
         #Calculate marginal and condtional probabilities
-        # This is super slow for some reason
         p_i_marg = logistic(torch.zeros(n, device=self.device).index_add_(0, row, message_free) + self.local)
-        p_i_cond = torch.sum(logistic(torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_clamp) + local), 1) / self.batch_size
+        p_i_cond = logistic(torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_clamp) + local)
+
+        # Calcluate pseudo_likelihood
+        pos = p_ij_cond[row < clamp] * adj[row < clamp] * data[col[col < clamp]] * data[row[row < clamp]]
+        pos_sum = torch.sum(torch.zeros(clamp, self.batch_size).index_add_(0, col[col < clamp], pos), 0)
+        neg = adj[row < clamp] * data[row[row < clamp]]
+        neg_sum = torch.sum(p_i_cond[:clamp] * torch.zeros(clamp, self.batch_size).index_add_(0, col[col < clamp], neg), 0)
+        pseudo_like = torch.sum(pos_sum - neg_sum, 0) / self.batch_size
+
+        # Average over batchs
+        p_ij_cond = torch.sum(p_ij_cond, 1) / self.batch_size
+        p_i_cond = torch.sum(p_i_cond, 1) / self.batch_size
+
         #Update model parameters
         th = self.th
-        self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond - p_ij_marg), max=th)
+        self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond / self.batch_size - p_ij_marg), max=th)
         self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), max=th)
-        pseudo_like = torch.sum(torch.log(p_i_cond[:clamp]))
         print("     avg weight: %.3g" % (torch.sum(self.adj) / self.adj.shape[0]))
         print("     max weight: %.3g" % (torch.max(self.adj)))
         print("     min weight: %.3g" % (torch.min(self.adj)))
         print("     avg bias: %.3g" % (torch.sum(self.local) / self.local.shape[0]))
         print("     max bias: %.3g" % (torch.max(self.local)))
         print("     min bias: %.3g" % (torch.min(self.local)))
+        print("     batch pseudo-like: %.3g" % pseudo_like)
+
         return pseudo_like
 
     def gibbs(self, iters, x=None):
@@ -337,9 +313,9 @@ class SparseMP():
         while i < iters:
             prob = logistic(x * (torch.zeros(n, device=self.device).index_add_(0, row, adj * x[col]) + local))
             sample = torch.rand(n, device=self.device)
-            # x[prob > sample] = 0
-            # x[prob < sample] = 1
-            x = torch.round(prob)
+            x[prob > sample] = 0
+            x[prob < sample] = 1
+            # x = torch.round(prob)
             i += 1
         # Return the state of the visible units
         return x
