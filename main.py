@@ -36,13 +36,13 @@ if __name__ == "__main__":
     gtype = GType.ER
     # numbers = list(range(10))
     numbers = [0]
-    n, k = int(1e4), 10
+    n, k = int(1e5), 10
     load, train, plot, exact = False, True, True, False
 
     print("%s graph with %d nodes" % (gtype.name, n))
 
     # Initialize model
-    lr, lr_decay, eps, th, epochs, batch_size, max_iters = 0.01, 0.1, 1e-3, 10.0, 1, 10, 200
+    lr, lr_decay, eps, th, epochs, batch_size, max_iters = 0.01, 0.1, 1e-5, 5.0, 1, 60, 200
     if load:
         model = SparseMP(gtype=gtype, dims = (n, k), load=True, numbers=numbers,
             lr=lr, lr_decay=lr_decay, eps=eps, th=th, epochs=epochs, batch_size=batch_size, max_iters=max_iters, device=device)
@@ -70,7 +70,7 @@ if __name__ == "__main__":
     # Generate m samples from model
     if plot:
         m = 3
-        samples = 10000
+        samples = 100000
         X0, _ = train_set[0]
         X0 = X0.squeeze()
         # x = torch.round(torch.rand(n, device=device))

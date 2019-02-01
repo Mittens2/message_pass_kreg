@@ -61,8 +61,8 @@ class SparseMP():
 
             # Normally distributed weights (look at RBM literature)
             # adj = torch.ones(row.shape[0], device=device)
-            # adj = torch.zeros(row.shape[0], device=device)
-            adj =torch.rand(row.shape[0], device=device)
+            adj = torch.zeros(row.shape[0], device=device)
+            # adj =torch.rand(row.shape[0], device=device)
             local = torch.zeros(n, device=device)
 
 
@@ -268,21 +268,20 @@ class SparseMP():
         p_i_marg = logistic(torch.zeros(n, device=self.device).index_add_(0, row, message_free) + self.local)
         p_i_cond = logistic(torch.zeros((n, self.batch_size), device=self.device).index_add_(0, row, message_clamp) + local)
 
-        # Calcluate pseudo_likelihood
-        pos = p_ij_cond[row < clamp] * adj[row < clamp] * data[col[col < clamp]] * data[row[row < clamp]]
-        pos_sum = torch.sum(torch.zeros(clamp, self.batch_size).index_add_(0, col[col < clamp], pos), 0)
-        neg = adj[row < clamp] * data[row[row < clamp]]
-        neg_sum = torch.sum(p_i_cond[:clamp] * torch.zeros(clamp, self.batch_size).index_add_(0, col[col < clamp], neg), 0)
-        pseudo_like = torch.sum(pos_sum - neg_sum, 0) / self.batch_size
-
         # Average over batchs
         p_ij_cond = torch.sum(p_ij_cond, 1) / self.batch_size
         p_i_cond = torch.sum(p_i_cond, 1) / self.batch_size
 
+        # Calcluate pseudo_likelihood
+        exp_arg = torch.zeros(n, device=self.device).index_add_(0, row, self.adj) + self.local
+        logZ = torch.log(1 + torch.exp(exp_arg))
+        pos = (p_i_cond * self.local).index_add_(0, row, p_ij_cond * self.adj)
+        pseudo_like = torch.sum((pos - logZ)[:clamp], 0)
+
         #Update model parameters
         th = self.th
         self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond / self.batch_size - p_ij_marg), max=th)
-        self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), max=th)
+        self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), max=th, min=-th)
         print("     avg weight: %.3g" % (torch.sum(self.adj) / self.adj.shape[0]))
         print("     max weight: %.3g" % (torch.max(self.adj)))
         print("     min weight: %.3g" % (torch.min(self.adj)))
@@ -313,9 +312,9 @@ class SparseMP():
         while i < iters:
             prob = logistic(x * (torch.zeros(n, device=self.device).index_add_(0, row, adj * x[col]) + local))
             sample = torch.rand(n, device=self.device)
-            x[prob > sample] = 0
-            x[prob < sample] = 1
-            # x = torch.round(prob)
+            # x[prob > sample] = 0
+            # x[prob < sample] = 1
+            x = torch.round(prob)
             i += 1
         # Return the state of the visible units
         return x
