@@ -36,14 +36,14 @@ if __name__ == "__main__":
     gtype = GType.ER
     # numbers = list(range(10))
     numbers = [0]
-    n, k = int(1e4), 10
+    n, k = int(5e3), 10
     load, train, plot, exact = False, True, False, False
 
     print("%s graph with %d nodes" % (gtype.name, n))
 
     # Initialize model
-    epochs, batch_size = 1, 20
-    lr, lr_decay, eps, th, max_iters = 0.01, 0.1, 1e-5, 10.0, 200
+    epochs, batch_size = 1, 5
+    lr, lr_decay, eps, th, max_iters = 0.05, 0.1, 1e-5, 10.0, 200
     model = SparseMP(gtype=gtype, dims = (n, k), load=load, numbers=numbers,
         lr=lr, lr_decay=lr_decay, eps=eps, th=th, max_iters=max_iters, device=device)
 

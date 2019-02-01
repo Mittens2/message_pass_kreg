@@ -176,7 +176,7 @@ class SparseMP():
         col= self.col
         n = self.dims[0]
         m = adj.shape[0]
-
+        
         # Initialize to zeros because using log ratio
         message_old = torch.zeros(m, device=self.device)
         message_new = torch.zeros(m, device=self.device)
@@ -192,7 +192,7 @@ class SparseMP():
             # For some reason samples from model never explode
             # message_new += torch.log(torch.exp(local[col] + adj + message) + 1)
             # message_new -= torch.log(torch.exp(local[col] + message) + 1)
-            message_new = message_new * self.damping + message_old * (1 - self.damping)
+            # message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
         print("     %d iterations until convergence, minimum difference %.3e" % (iters,  torch.max(torch.abs(message_new - message_old))))
         self.message_free = message_new
@@ -226,7 +226,7 @@ class SparseMP():
             message_old = message_new.clone()
             message = (torch.zeros((n, batch_size), device=self.device).index_add_(0, row, message_old)[row] - message_old)[self.r2c]
             message_new = local[row]
-            mask = message > 10
+            mask = message < 10
             message_new[mask != 1] += adj[mask != 1]
             message_new[mask] += torch.log(torch.exp(local[col][mask] + adj[mask] + message[mask]) + 1)
             message_new[mask] -= torch.log(torch.exp(local[col][mask] + message[mask]) + 1)
@@ -291,7 +291,7 @@ class SparseMP():
         #Update model parameters
         th = self.th
         self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond / batch_size - p_ij_marg), max=th)
-        self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), max=th, min=th)
+        self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), min=-th, max=th)
         print("     avg weight: %.3g" % (torch.sum(self.adj) / self.adj.shape[0]))
         print("     max weight: %.3g" % (torch.max(self.adj)))
         print("     min weight: %.3g" % (torch.min(self.adj)))
