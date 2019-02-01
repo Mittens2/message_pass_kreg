@@ -36,19 +36,16 @@ if __name__ == "__main__":
     gtype = GType.ER
     # numbers = list(range(10))
     numbers = [0]
-    n, k = int(1e5), 10
-    load, train, plot, exact = False, True, True, False
+    n, k = int(1e4), 10
+    load, train, plot, exact = False, True, False, False
 
     print("%s graph with %d nodes" % (gtype.name, n))
 
     # Initialize model
-    lr, lr_decay, eps, th, epochs, batch_size, max_iters = 0.01, 0.1, 1e-5, 5.0, 1, 60, 200
-    if load:
-        model = SparseMP(gtype=gtype, dims = (n, k), load=True, numbers=numbers,
-            lr=lr, lr_decay=lr_decay, eps=eps, th=th, epochs=epochs, batch_size=batch_size, max_iters=max_iters, device=device)
-    else:
-        model = SparseMP(gtype=gtype, dims = (n, k), load=False, numbers=numbers,
-            lr=lr, lr_decay=lr_decay, eps=eps, th=th, epochs=epochs, batch_size=batch_size, max_iters=max_iters, device=device)
+    epochs, batch_size = 1, 20
+    lr, lr_decay, eps, th, max_iters = 0.01, 0.1, 1e-5, 10.0, 200
+    model = SparseMP(gtype=gtype, dims = (n, k), load=load, numbers=numbers,
+        lr=lr, lr_decay=lr_decay, eps=eps, th=th, max_iters=max_iters, device=device)
 
     # Cycle statistics
     # print("     expected cycles of length <=%d per node: %.3f" % (cyc, cycles_expected(n, k, cyc, gtype)))
@@ -57,16 +54,16 @@ if __name__ == "__main__":
     if train:
         mask = torch.ones(len(train_set.train_labels), dtype=torch.uint8)
         sampler = subSampler(numbers, train_set)
-        pseudo_trend = model.train(train_set=train_set, save=True, sampler=sampler)
+        pseudo_trend = model.train(train_set=train_set, epochs=epochs, batch_size=batch_size, save=True, sampler=sampler)
         # Plot pseudo likelihood
-        # plt.plot(np.arange(0, len(pseudo_trend)), pseudo_trend)
-        # plt.xlabel('epoch')
-        # plt.ylabel('pseudo likelihood')
-        # title = '(%d, %d, %d) Pseudo likelihood trend' % (len(numbers), n, k)
-        # plt.title(title)
-        # plt.legend()
-        # savefig(title, gtype)
-        # plt.show()
+        plt.plot(np.arange(0, len(pseudo_trend)), pseudo_trend)
+        plt.xlabel('epoch')
+        plt.ylabel('pseudo likelihood')
+        title = '(%d, %d, %d) Pseudo likelihood trend' % (len(numbers), n, k)
+        plt.title(title)
+        plt.legend()
+        savefig(title, gtype)
+        plt.show()
     # Generate m samples from model
     if plot:
         m = 3

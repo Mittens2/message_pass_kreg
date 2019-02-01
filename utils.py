@@ -63,7 +63,8 @@ class subSampler(Sampler):
         self.num_list = num_list
         mask = torch.ones(len(train_set.train_labels), dtype=torch.uint8)
         for num in num_list:
-            mask = mask | (train_set.train_labels == num)
+            mask = mask & (train_set.train_labels == num)
+        print("Size of dataset: %d" % mask[mask != 0].shape[0])
         self.mask = mask
 
     def __iter__(self):
