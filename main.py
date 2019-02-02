@@ -15,12 +15,34 @@ from brute_force import BruteForceInference
 from clique_tree import CliqueTreeInference
 from message_pass import SparseMP
 from itertools import chain
+import argparse
 from ex_utils import *
 from utils import *
 
 MODEL_DIR = 'data/model/'
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    # Script Parameters
+    parser.add_argument("-l", "--load", action="store_true")
+    parser.add_argument("-t", "--train", action="store_true")
+    parser.add_argument("-p", "--plot", action="store_true")
+    parser.add_argument("-x", "--exact", action="store_true")
+    parser.add_argument("-s", "--save", action="store_false")
+    parser.add_argument("-d", "--numbers", type=list, default=[0])
+    # Graph Parameters
+    parser.add_argument("-g", "--graph_type", type=GType, default=GType.ER)
+    parser.add_argument("-n", "--nodes", type=int, default=int(1e4))
+    parser.add_argument("-k", "--degree", type=int, default=10)
+    # Hyperparameters
+    parser.add_argument("-e", "--epochs", type=int, default=3)
+    parser.add_argument("-b", "--batch_size", type=int, default=20)
+    parser.add_argument("-lr", "--learning_rate", type=float, default=0.01)
+    parser.add_argument("-ld", "--lr_decay", type=float, default=0.1)
+    parser.add_argument("-ep", "--epsilon", type=float, default=1e-3)
+    parser.add_argument("-mi", "--max_iters", type=int, default=200)
+    parser.add_argument("-th", "--threshold", type=float, default=10.0)
+    args, _ = parser.parse_known_args()
     # Set torch device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(torch.cuda.is_available())
@@ -31,41 +53,29 @@ if __name__ == "__main__":
         os.mkdir(root)
     trans = transforms.Compose([transforms.ToTensor()])
     train_set = dset.MNIST(root=root, train=True, transform=trans, download=True)
-
-    # These parameters should be taken in via command line
-    gtype = GType.ER
-    # numbers = list(range(10))
-    numbers = [0]
-    n, k = int(5e3), 10
-    load, train, plot, exact = False, True, False, False
-
-    print("%s graph with %d nodes" % (gtype.name, n))
+    print("%s graph with %d nodes" % (args.graph_type.name, args.nodes))
 
     # Initialize model
-    epochs, batch_size = 1, 5
-    lr, lr_decay, eps, th, max_iters = 0.05, 0.1, 1e-5, 10.0, 200
-    model = SparseMP(gtype=gtype, dims = (n, k), load=load, numbers=numbers,
-        lr=lr, lr_decay=lr_decay, eps=eps, th=th, max_iters=max_iters, device=device)
-
-    # Cycle statistics
-    # print("     expected cycles of length <=%d per node: %.3f" % (cyc, cycles_expected(n, k, cyc, gtype)))
+    model = SparseMP(gtype=args.graph_type, dims = (args.nodes, args.degree), load=args.load, numbers=args.numbers,
+        lr=args.learning_rate, lr_decay=args.lr_decay, eps=args.epsilon, th=args.threshold, max_iters=args.max_iters,
+        device=device)
 
     # Train model with sub-sampler
-    if train:
+    if args.train:
         mask = torch.ones(len(train_set.train_labels), dtype=torch.uint8)
-        sampler = subSampler(numbers, train_set)
-        pseudo_trend = model.train(train_set=train_set, epochs=epochs, batch_size=batch_size, save=True, sampler=sampler)
+        sampler = subSampler(args.numbers, train_set)
+        pseudo_trend = model.train(train_set=train_set, epochs=args.epochs, batch_size=args.batch_size, save=args.save, sampler=sampler)
         # Plot pseudo likelihood
         plt.plot(np.arange(0, len(pseudo_trend)), pseudo_trend)
         plt.xlabel('epoch')
         plt.ylabel('pseudo likelihood')
-        title = '(%d, %d, %d) Pseudo likelihood trend' % (len(numbers), n, k)
+        title = '(%d, %d, %d) Pseudo likelihood trend' % (len(args.numbers), args.nodes, args.degree)
         plt.title(title)
         plt.legend()
-        savefig(title, gtype)
+        savefig(title, args.gtype)
         plt.show()
     # Generate m samples from model
-    if plot:
+    if args.plot:
         m = 3
         samples = 100000
         X0, _ = train_set[0]
@@ -84,7 +94,7 @@ if __name__ == "__main__":
         plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
         savefig("(%d, %d, %d)gibbs" % (len(numbers), n, k), gtype)
 
-    if exact:
+    if args.exact:
         # Get marginals using message passing
         # Non-zero entries of adjacency matrix
         row = model.row.numpy()
@@ -94,9 +104,7 @@ if __name__ == "__main__":
         print(col)
         adj[row, col] = 1
         cti = CliqueTreeInference(adj, verbosity=1)
-        # bfi = BruteForceInference(adj, verbosity=2)
         marg_mp = model.free_mp()
         marg_ex = cti.get_marginal(list(range(0, n)))
         print(marg_mp)
         print(marg_ex)
-        # Get marginals using exact inference

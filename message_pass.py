@@ -164,7 +164,7 @@ class SparseMP():
             self.save_params()
             self.lr *= self.lr_decay
             pseudo_trend += pseudo_epoch
-        print(self.local[:data.shape[1]])
+        print(self.local[:data.shape[0]])
         return pseudo_trend
 
     def free_mp(self):
@@ -176,7 +176,7 @@ class SparseMP():
         col= self.col
         n = self.dims[0]
         m = adj.shape[0]
-        
+
         # Initialize to zeros because using log ratio
         message_old = torch.zeros(m, device=self.device)
         message_new = torch.zeros(m, device=self.device)
@@ -208,7 +208,7 @@ class SparseMP():
         clamp = data.shape[0]
         batch_size = data.shape[1]
         adj = self.adj.clone().unsqueeze(1).expand(-1, batch_size)
-        local = self.local.unsqueeze(1).expand(-1, batch_size)
+        local = self.local.clone().unsqueeze(1).expand(-1, batch_size)
         row = self.row
         col = self.col
         n = local.shape[0]
@@ -265,11 +265,11 @@ class SparseMP():
 
         #Calculate conditional joint probability
         msg_clamp = self.message_clamp
-        adj = self.adj.unsqueeze(1).expand(-1, batch_size)
+        adj = adj.unsqueeze(1).expand(-1, batch_size)
         local = local.unsqueeze(1).expand(-1, batch_size)
         # Add unit that sends signal of +-100 based on data
         msg_sum = torch.zeros((n, batch_size), device=self.device).index_add_(0, row, msg_clamp)
-        msg_sum[:clamp] += (data * 2 - 1) * 10
+        msg_sum[:clamp] += (data * 2 - 1) * 100
         sum_clamp = msg_sum[row] - msg_clamp
         p_ij_cond = 1 / (torch.exp(-(sum_clamp + sum_clamp[r2c] + local[row] + local[col] + adj)) \
         + torch.exp(-(sum_clamp + local[row] + adj)) + torch.exp(-(sum_clamp[r2c] + local[col] + adj)) + 1)
@@ -283,14 +283,14 @@ class SparseMP():
         p_i_cond = torch.sum(p_i_cond, 1) / batch_size
 
         # Calcluate pseudo_likelihood
-        exp_arg = torch.zeros(n, device=self.device).index_add_(0, row, self.adj) + self.local
+        exp_arg = torch.zeros(n, device=self.device).index_add_(0, row, self.adj * p_i_cond[col]) + self.local
         logZ = torch.log(1 + torch.exp(exp_arg))
-        pos = (p_i_cond * self.local).index_add_(0, row, p_ij_cond * self.adj)
+        pos = (p_i_cond * self.local).index_add_(0, row, self.adj * p_ij_cond)
         pseudo_like = torch.sum((pos - logZ)[:clamp], 0)
 
         #Update model parameters
         th = self.th
-        self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond / batch_size - p_ij_marg), max=th)
+        self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond - p_ij_marg), max=th)
         self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), min=-th, max=th)
         print("     avg weight: %.3g" % (torch.sum(self.adj) / self.adj.shape[0]))
         print("     max weight: %.3g" % (torch.max(self.adj)))
