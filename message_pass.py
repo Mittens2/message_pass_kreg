@@ -282,7 +282,7 @@ class SparseMP():
         p_ij_cond = torch.sum(p_ij_cond, 1) / batch_size
         p_i_cond = torch.sum(p_i_cond, 1) / batch_size
 
-        # Calcluate pseudo_likelihood
+        # Calcluate pseudo_likelihood... Have no idea how to make this work
         exp_arg = torch.zeros(n, device=self.device).index_add_(0, row, self.adj * p_i_cond[col]) + self.local
         logZ = torch.log(1 + torch.exp(exp_arg))
         pos = (p_i_cond * self.local).index_add_(0, row, self.adj * p_ij_cond)
@@ -322,8 +322,8 @@ class SparseMP():
         while i < iters:
             prob = logistic(x * (torch.zeros(n, device=self.device).index_add_(0, row, adj * x[col]) + local))
             sample = torch.rand(n, device=self.device)
-            x[prob > sample] = 0
-            x[prob < sample] = 1
+            x[prob > sample] = 1
+            x[prob < sample] = 0
             # x = torch.round(prob)
             i += 1
         # Return the state of the visible units

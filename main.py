@@ -77,14 +77,14 @@ if __name__ == "__main__":
     # Generate m samples from model
     if args.plot:
         m = 3
-        samples = 100000
+        samples = 20000
         X0, _ = train_set[0]
         X0 = X0.squeeze()
-        # x = torch.round(torch.rand(n, device=device))
+        x = torch.round(torch.rand(n, device=device))
         plt.figure(figsize=(4.2, 4))
         for i in range(1, m ** 2 + 1):
             plt.subplot(m, m, i)
-            x = model.gibbs(samples)
+            x = model.gibbs(samples, x)
             # x = model.free_mp()
             plt.imshow(x[:X0.view(-1).shape[0]].view(X0.shape[0], -1), cmap=plt.cm.gray_r, interpolation='nearest')
             plt.xticks(())
@@ -92,7 +92,7 @@ if __name__ == "__main__":
             print("SMP: " + str(i) + " images generated.")
         plt.suptitle('Regenerated numbers', fontsize=16)
         plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
-        savefig("(%d, %d, %d)gibbs" % (len(numbers), n, k), gtype)
+        savefig("(%d, %d, %d)gibbs" % (len(args.numbers), args.nodes, args.degree), args.graph_type)
 
     if args.exact:
         # Get marginals using message passing
