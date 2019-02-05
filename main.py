@@ -43,6 +43,7 @@ if __name__ == "__main__":
     parser.add_argument("-mi", "--max_iters", type=int, default=200)
     parser.add_argument("-th", "--threshold", type=float, default=10.0)
     args, _ = parser.parse_known_args()
+    print(args.epsilon)
     # Set torch device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     print(torch.cuda.is_available())
@@ -67,12 +68,12 @@ if __name__ == "__main__":
         pseudo_trend = model.train(train_set=train_set, epochs=args.epochs, batch_size=args.batch_size, save=args.save, sampler=sampler)
         # Plot pseudo likelihood
         plt.plot(np.arange(0, len(pseudo_trend)), pseudo_trend)
-        plt.xlabel('epoch')
-        plt.ylabel('pseudo likelihood')
-        title = '(%d, %d, %d) Pseudo likelihood trend' % (len(args.numbers), args.nodes, args.degree)
+        plt.xlabel('iter')
+        plt.ylabel('bethe free energy')
+        title = '(%d, %d, %d) Bethe trend' % (len(args.numbers), args.nodes, args.degree)
         plt.title(title)
         plt.legend()
-        savefig(title, args.gtype)
+        savefig(title, args.graph_type)
         plt.show()
     # Generate m samples from model
     if args.plot:
@@ -80,12 +81,11 @@ if __name__ == "__main__":
         samples = 20000
         X0, _ = train_set[0]
         X0 = X0.squeeze()
-        x = torch.round(torch.rand(n, device=device))
+        x = torch.round(torch.rand(args.nodes, device=device))
         plt.figure(figsize=(4.2, 4))
         for i in range(1, m ** 2 + 1):
             plt.subplot(m, m, i)
             x = model.gibbs(samples, x)
-            # x = model.free_mp()
             plt.imshow(x[:X0.view(-1).shape[0]].view(X0.shape[0], -1), cmap=plt.cm.gray_r, interpolation='nearest')
             plt.xticks(())
             plt.yticks(())
@@ -99,7 +99,7 @@ if __name__ == "__main__":
         # Non-zero entries of adjacency matrix
         row = model.row.numpy()
         col = model.col.numpy()
-        adj = np.zeros((n, n))
+        adj = np.zeros((args.nodes, args.nodes))
         print(row)
         print(col)
         adj[row, col] = 1
