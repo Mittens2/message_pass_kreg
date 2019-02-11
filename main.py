@@ -24,16 +24,15 @@ MODEL_DIR = 'data/model/'
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Script Parameters
-    parser.add_argument("-l", "--load", action="store_true")
+    parser.add_argument("-l", "--load", action="store_false")
     parser.add_argument("-t", "--train", action="store_true")
     parser.add_argument("-p", "--plot", action="store_true")
     parser.add_argument("-x", "--exact", action="store_true")
     parser.add_argument("-s", "--save", action="store_false")
-    parser.add_argument("-d", "--numbers", type=list, default=[0])
+    parser.add_argument("-d", '--numbers', nargs='+', type=int, default=[0])
     # Graph Parameters
-    parser.add_argument("-g", "--graph_type", type=GType, default=GType.ER)
+    parser.add_argument("-g", "--graph_type", type=int, default=2)
     parser.add_argument("-n", "--nodes", type=int, default=int(1e4))
-    parser.add_argument("-k", "--degree", type=int, default=10)
     # Hyperparameters
     parser.add_argument("-e", "--epochs", type=int, default=3)
     parser.add_argument("-b", "--batch_size", type=int, default=20)
@@ -43,10 +42,8 @@ if __name__ == "__main__":
     parser.add_argument("-mi", "--max_iters", type=int, default=200)
     parser.add_argument("-th", "--threshold", type=float, default=10.0)
     args, _ = parser.parse_known_args()
-    print(args.epsilon)
     # Set torch device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    print(torch.cuda.is_available())
 
     # Load data
     root = './data'
@@ -54,31 +51,32 @@ if __name__ == "__main__":
         os.mkdir(root)
     trans = transforms.Compose([transforms.ToTensor()])
     train_set = dset.MNIST(root=root, train=True, transform=trans, download=True)
-    print("%s graph with %d nodes" % (args.graph_type.name, args.nodes))
+    print("%s graph with %d nodes" % (GType(args.graph_type).name, args.nodes))
 
     # Initialize model
-    model = SparseMP(gtype=args.graph_type, dims = (args.nodes, args.degree), load=args.load, numbers=args.numbers,
+    model = SparseMP(gtype=GType(args.graph_type), n=args.nodes, load=args.load, numbers=args.numbers,
         lr=args.learning_rate, lr_decay=args.lr_decay, eps=args.epsilon, th=args.threshold, max_iters=args.max_iters,
         device=device)
 
     # Train model with sub-sampler
     if args.train:
         mask = torch.ones(len(train_set.train_labels), dtype=torch.uint8)
+        args.numbers = [int(x) for x in args.numbers]
         sampler = subSampler(args.numbers, train_set)
         pseudo_trend = model.train(train_set=train_set, epochs=args.epochs, batch_size=args.batch_size, save=args.save, sampler=sampler)
         # Plot pseudo likelihood
         plt.plot(np.arange(0, len(pseudo_trend)), pseudo_trend)
         plt.xlabel('iter')
         plt.ylabel('bethe free energy')
-        title = '(%d, %d, %d) Bethe trend' % (len(args.numbers), args.nodes, args.degree)
+        title = '(%d, %d) bethe' % (len(args.numbers), args.nodes)
         plt.title(title)
         plt.legend()
         savefig(title, args.graph_type)
         plt.show()
     # Generate m samples from model
     if args.plot:
-        m = 3
-        samples = 20000
+        m = 4
+        samples = 100000
         X0, _ = train_set[0]
         X0 = X0.squeeze()
         x = torch.round(torch.rand(args.nodes, device=device))
@@ -92,7 +90,7 @@ if __name__ == "__main__":
             print("SMP: " + str(i) + " images generated.")
         plt.suptitle('Regenerated numbers', fontsize=16)
         plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
-        savefig("(%d, %d, %d)gibbs" % (len(args.numbers), args.nodes, args.degree), args.graph_type)
+        savefig("(%d, %d) gibbs" % (len(args.numbers), args.nodes), GType(args.graph_type))
 
     if args.exact:
         # Get marginals using message passing

@@ -12,13 +12,12 @@ MODEL_DIR = 'data/model/'
 
 class SparseMP():
 
-    def __init__(self, gtype, dims, numbers, seed=42, load=False,
-                 lr=0.1, damping=0.5, eps=1e-16, th=0.2, max_iters=10, lr_decay=2, device=torch.device("cpu")):
+    def __init__(self, gtype, n, numbers, seed=42, load=False,
+                 lr=0.1, damping=0.5, eps=1e-7, th=5.0, max_iters=10, lr_decay=2, device=torch.device("cpu")):
         # Model parameters
-        n, k = dims
         torch.manual_seed(seed)
         self.gtype = gtype
-        self.dims = dims
+        self.n = n
         self.numbers = len(numbers)
         self.lr_decay = lr_decay
         self.best_bethe = -float('inf')
@@ -27,10 +26,9 @@ class SparseMP():
         # Load model data
         if load:
             self.load_params()
-        # Initialize model data from scratch
         else:
             if gtype == GType.ER: # Use igraph for erdos-renyi
-                G = igraph.Graph.Erdos_Renyi(n=n, p= 1.1 * math.log(n) / n)
+                G = igraph.Graph.Erdos_Renyi(n=n, p= 2 * math.log(n) / n)
                 print("     Graph connected? %r" % (G.is_connected()))
                 adj_list= G.get_adjlist()
                 col_list = [item for sublist in adj_list for item in sublist]
@@ -42,7 +40,7 @@ class SparseMP():
                 col = torch.LongTensor(col_list)
             else: # Use nx for tree (exact inference test) or K-regular
                 if gtype == GType.KR:
-                    G = nx.random_regular_graph(k, n)
+                    G = nx.random_regular_graph((n + 1) / n * math.log(n), n)
                 else:
                     G = nx.star_graph(n=n-1)
                 print("Graph connected? %r" % (nx.is_connected(G)))
@@ -59,8 +57,9 @@ class SparseMP():
                 r2c = r2c.cuda()
 
             # Normally distributed weights (look at RBM literature)
-            adj = (torch.rand(row.shape[0], device=device) - 1) * 0.01
-            local = torch.zeros(n, device=device)
+            adj = (torch.rand(row.shape[0], device=device) - 0.5) * 0.01
+            local = (torch.rand(n, device=device) - 0.5) * 0.01
+            # local = (torch.zeros(n, device=device))
 
 
             self.adj = adj
@@ -79,14 +78,13 @@ class SparseMP():
     def load_params(self):
         """Load model parameters
         """
-        n, k = self.dims
+        n = self.n
         numbers = self.numbers
-        if self.gtype == GType.ER:
-            fn_weights = os.path.join(MODEL_DIR, 'ER', '%d_%d_weights.pt' % (numbers, n))
-            fn_adjecency = os.path.join(MODEL_DIR, 'ER', '%d_%d_adjecency.pt' % (numbers, n))
-        else:
-            fn_weights = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_weights.pt' % (numbers, n, k))
-            fn_adjecency = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_adjecency.pt' % (numbers, n, k))
+        fn_weights = os.path.join(MODEL_DIR, self.gtype.name, '%d_%d_weights.pt' % (numbers, n))
+        fn_adjecency = os.path.join(MODEL_DIR, self.gtype.name, '%d_%d_adjecency.pt' % (numbers, n))
+
+        if not os.path.exists(fn_weights):
+            return False
         local, adj = torch.load(fn_weights)
         row, col, r2c = torch.load(fn_adjecency)
         if torch.cuda.is_available():
@@ -101,12 +99,13 @@ class SparseMP():
         self.row = row
         self.col = col
         self.r2c = r2c
+        return True
 
 
     def save_params(self):
         """Save model parameters
         """
-        n, k = self.dims
+        n = self.n
         numbers = self.numbers
         local = self.local
         adj = self.adj
@@ -120,12 +119,8 @@ class SparseMP():
              col = col.to(torch.device("cpu"))
              r2c = r2c.to(torch.device("cpu"))
 
-        if self.gtype == GType.ER:
-            fn_weights = os.path.join(MODEL_DIR, 'ER', '%d_%d_weights.pt' % (numbers, n))
-            fn_adjecency = os.path.join(MODEL_DIR, 'ER', '%d_%d_adjecency.pt' % (numbers, n))
-        else:
-            fn_weights = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_weights.pt' % (numbers, n, k))
-            fn_adjecency = os.path.join(MODEL_DIR, 'KR', '%d_%d_%d_adjecency.pt' % (numbers, n, k))
+        fn_weights = os.path.join(MODEL_DIR, self.gtype.name, '%d_%d_weights.pt' % (numbers, n))
+        fn_adjecency = os.path.join(MODEL_DIR, self.gtype.name, '%d_%d_adjecency.pt' % (numbers, n))
 
         torch.save((local, adj), fn_weights)
         torch.save((row, col, r2c), fn_adjecency)
@@ -138,7 +133,6 @@ class SparseMP():
         else:
             num_workers = 0
         train_loader = DataLoader(train_set, batch_size=batch_size, sampler=sampler, num_workers=num_workers)
-        i = 0
         bethe_trend = []
         for i in range(epochs):
             bethe_epoch = []
@@ -154,13 +148,11 @@ class SparseMP():
                 bethe_batch = self.update(data)
                 bethe_epoch += [bethe_batch]
                 print("     epoch bethe: %.3g \n" % (sum(bethe_epoch) / (j + 1)))
-                break
-            bethe = sum(bethe_epoch) / len(train_set)
-            if bethe > self.best_bethe:
-                self.best_bethe = bethe
             self.save_params()
-            self.lr *= self.lr_decay
+            # if i == epochs // 3 or i == (2 * epochs) // 3:
+            #     self.lr *= self.lr_decay
             bethe_trend += bethe_epoch
+        print("     local weights")
         print(self.local[:data.shape[0]])
         return bethe_trend
 
@@ -171,7 +163,7 @@ class SparseMP():
         local = self.local
         row = self.row
         col= self.col
-        n = self.dims[0]
+        n = self.n
         m = adj.shape[0]
 
         # Initialize to zeros because using log ratio
@@ -185,7 +177,7 @@ class SparseMP():
             # For some reason samples from model never explode
             message_new += torch.log(torch.exp(local[col] + adj + message) + 1)
             message_new -= torch.log(torch.exp(local[col] + message) + 1)
-            message_new[torch.isnan(message_new)] = adj[torch.isnan(message_new)]
+            message_new[torch.isinf(message_new) + torch.isnan(message_new)] = adj[torch.isinf(message_new) + torch.isnan(message_new)].clone()
             message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
         print("     %d iterations until convergence, minimum difference %.3e" % (iters,  torch.max(torch.abs(message_new - message_old))))
@@ -220,10 +212,9 @@ class SparseMP():
             message_old = message_new.clone()
             message = (torch.zeros((n, batch_size), device=self.device).index_add_(0, row, message_old)[row] - message_old)[self.r2c]
             message_new = local[row]
-            # Alternative way of ensuring no nan
             message_new += torch.log(torch.exp(local[col] + adj + message) + 1)
             message_new -= torch.log(torch.exp(local[col] + message) + 1)
-            message_new[torch.isnan(message_new)] = adj[torch.isnan(message_new)]
+            message_new[torch.isinf(message_new) + torch.isnan(message_new)] = adj[torch.isinf(message_new) + torch.isnan(message_new)]
             message_new = message_new * self.damping + message_old * (1 - self.damping)
             iters+=1
         print("     %d iterations until convergence, minimum difference %.3e" % (iters,  torch.max(torch.abs(message_new - message_old))))
@@ -245,7 +236,7 @@ class SparseMP():
         batch_size = data.shape[1]
         message_free = self.message_free
         message_clamp = self.message_clamp
-        n = self.dims[0]
+        n = self.n
 
         #Old without external
         msg_free = self.message_free
@@ -263,22 +254,30 @@ class SparseMP():
         sum_clamp = msg_sum[row] - msg_clamp
         p_ij_cond = 1 / (torch.exp(-(sum_clamp + sum_clamp[r2c] + local[row] + local[col] + adj)) \
         + torch.exp(-(sum_clamp + local[row] + adj)) + torch.exp(-(sum_clamp[r2c] + local[col] + adj)) + 1)
-        p_ij_cond[torch.isnan(p_ij_cond)] = 0
 
         #Calculate marginal and condtional probabilities
         message_clamp[:clamp] += (data * 2 - 1) * 100
         p_i_marg = logistic(torch.zeros(n, device=self.device).index_add_(0, row, message_free) + self.local)
         p_i_cond = logistic(torch.zeros((n, batch_size), device=self.device).index_add_(0, row, message_clamp) + local)
-        p_i_cond[torch.isnan(p_i_cond)] = 0
 
         # Average over batchs
         p_ij_cond = torch.sum(p_ij_cond, 1) / batch_size
         p_i_cond = torch.sum(p_i_cond, 1) / batch_size
 
-        pos = torch.sum(torch.log(p_ij_cond[(row >= clamp) * (col >= clamp)]) * p_ij_cond[(row >= clamp) * (col >= clamp)]) / 2
-        const = torch.zeros(n, device=self.device).index_add_(0, row, torch.ones(row.shape[0], device=self.device))
-        neg = torch.sum(const[clamp:] * (p_i_cond[clamp:] * torch.log(p_i_cond[clamp:])))
-        bethe = pos - neg
+        mask = (row >= clamp) * (col >= clamp) * (1 - torch.isinf(torch.log(p_ij_cond)))
+        neg_clamp = torch.sum(torch.log(p_ij_cond)[mask] * p_ij_cond[mask]) / 2
+        const_clamp = torch.zeros(n, device=self.device).index_add_(0, row[col >= clamp], torch.ones(row[col >= clamp].shape[0], device=self.device)) - 1
+        mask = (p_i_cond != 0)
+        pos_clamp = torch.sum(const_clamp[mask] * (p_i_cond[mask] * torch.log(p_i_cond[p_i_cond != 0])))
+        entropy_clamp = pos_clamp - neg_clamp
+        energy = torch.sum((p_ij_cond - p_ij_marg) * self.adj) + torch.sum((p_i_cond - p_i_marg) * self.local)
+
+        neg = torch.sum(torch.log(p_ij_marg) * p_ij_marg) / 2
+        const = torch.zeros(n, device=self.device).index_add_(0, row, torch.ones(row.shape[0], device=self.device)) - 1
+        pos = torch.sum(const * (p_i_marg * torch.log(p_i_marg)))
+        entropy = pos - neg
+
+        bethe = (entropy_clamp - entropy) + energy
 
         delta_loc = torch.norm(p_i_cond - p_i_marg)
         delta_adj = torch.norm(p_ij_cond - p_ij_marg)
@@ -286,7 +285,7 @@ class SparseMP():
         #Update model parameters
         th = self.th
         self.adj = torch.clamp(self.adj + self.lr * (p_ij_cond - p_ij_marg), max=th)
-        self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), min=-th, max=th)
+        self.local = torch.clamp(self.local + self.lr * (p_i_cond - p_i_marg), max=th)
         print("     avg weight: %.3g" % (torch.sum(self.adj) / self.adj.shape[0]))
         print("     max weight: %.3g" % (torch.max(self.adj)))
         print("     min weight: %.3g" % (torch.min(self.adj)))
@@ -310,7 +309,7 @@ class SparseMP():
         local = self.local
         row = self.row
         col = self.col
-        n = self.dims[0]
+        n = self.n
         # Initialize units to random weights
         if x is None:
             x = torch.round(torch.rand(n, device=self.device))
