@@ -6,4 +6,4 @@
 #SBATCH --output=%N-%j.out
 module load miniconda3
 source activate pytorch
-python main.py -l -p -n 500000 -d 0 1
+python main.py -p -n 50000 -d 0 1

@@ -13,7 +13,7 @@ MODEL_DIR = 'data/model/'
 class SparseMP():
 
     def __init__(self, gtype, n, numbers, seed=42, load=False,
-                 lr=0.1, damping=0.5, eps=1e-7, th=5.0, max_iters=10, lr_decay=2, device=torch.device("cpu")):
+                 lr=0.1, damping=0.2, eps=1e-4, th=10.0, max_iters=200, lr_decay=0.1, device=torch.device("cpu")):
         # Model parameters
         torch.manual_seed(seed)
         self.gtype = gtype
@@ -28,7 +28,7 @@ class SparseMP():
             self.load_params()
         else:
             if gtype == GType.ER: # Use igraph for erdos-renyi
-                G = igraph.Graph.Erdos_Renyi(n=n, p= 2 * math.log(n) / n)
+                G = igraph.Graph.Erdos_Renyi(n=n, p=2 * math.log(n) / n)
                 print("     Graph connected? %r" % (G.is_connected()))
                 adj_list= G.get_adjlist()
                 col_list = [item for sublist in adj_list for item in sublist]
@@ -134,6 +134,7 @@ class SparseMP():
             num_workers = 0
         train_loader = DataLoader(train_set, batch_size=batch_size, sampler=sampler, num_workers=num_workers)
         bethe_trend = []
+        lr_decay_epoch = [0, 1, 4]
         for i in range(epochs):
             bethe_epoch = []
             print("epoch %d" %(i))
@@ -149,8 +150,10 @@ class SparseMP():
                 bethe_epoch += [bethe_batch]
                 print("     epoch bethe: %.3g \n" % (sum(bethe_epoch) / (j + 1)))
             self.save_params()
-            # if i == epochs // 3 or i == (2 * epochs) // 3:
-            #     self.lr *= self.lr_decay
+            if i in lr_decay_epoch:
+                self.lr *= 0.1
+                self.eps *= 0.1
+                self.damping += 0.2
             bethe_trend += bethe_epoch
         print("     local weights")
         print(self.local[:data.shape[0]])
@@ -178,7 +181,7 @@ class SparseMP():
             message_new += torch.log(torch.exp(local[col] + adj + message) + 1)
             message_new -= torch.log(torch.exp(local[col] + message) + 1)
             message_new[torch.isinf(message_new) + torch.isnan(message_new)] = adj[torch.isinf(message_new) + torch.isnan(message_new)].clone()
-            message_new = message_new * self.damping + message_old * (1 - self.damping)
+            message_new = message_new * (1 - self.damping) + message_old * self.damping
             iters+=1
         print("     %d iterations until convergence, minimum difference %.3e" % (iters,  torch.max(torch.abs(message_new - message_old))))
         self.message_free = message_new
@@ -215,7 +218,7 @@ class SparseMP():
             message_new += torch.log(torch.exp(local[col] + adj + message) + 1)
             message_new -= torch.log(torch.exp(local[col] + message) + 1)
             message_new[torch.isinf(message_new) + torch.isnan(message_new)] = adj[torch.isinf(message_new) + torch.isnan(message_new)]
-            message_new = message_new * self.damping + message_old * (1 - self.damping)
+            message_new = message_new * (1 - self.damping) + message_old * self.damping
             iters+=1
         print("     %d iterations until convergence, minimum difference %.3e" % (iters,  torch.max(torch.abs(message_new - message_old))))
         self.message_clamp = message_new

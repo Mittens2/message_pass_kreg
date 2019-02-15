@@ -38,9 +38,10 @@ if __name__ == "__main__":
     parser.add_argument("-b", "--batch_size", type=int, default=20)
     parser.add_argument("-lr", "--learning_rate", type=float, default=0.01)
     parser.add_argument("-ld", "--lr_decay", type=float, default=0.1)
-    parser.add_argument("-ep", "--epsilon", type=float, default=1e-3)
+    parser.add_argument("-ep", "--epsilon", type=float, default=1e-4)
     parser.add_argument("-mi", "--max_iters", type=int, default=200)
     parser.add_argument("-th", "--threshold", type=float, default=10.0)
+    parser.add_argument("-da", "--damping", type=float, default=0.5)
     args, _ = parser.parse_known_args()
     # Set torch device
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -55,7 +56,7 @@ if __name__ == "__main__":
 
     # Initialize model
     model = SparseMP(gtype=GType(args.graph_type), n=args.nodes, load=args.load, numbers=args.numbers,
-        lr=args.learning_rate, lr_decay=args.lr_decay, eps=args.epsilon, th=args.threshold, max_iters=args.max_iters,
+        lr=args.learning_rate, lr_decay=args.lr_decay, damping=args.damping, eps=args.epsilon, th=args.threshold, max_iters=args.max_iters,
         device=device)
 
     # Train model with sub-sampler
@@ -71,7 +72,7 @@ if __name__ == "__main__":
         title = '(%d, %d) bethe' % (len(args.numbers), args.nodes)
         plt.title(title)
         plt.legend()
-        savefig(title, args.graph_type)
+        savefig(title, GType(args.graph_type))
         plt.show()
     # Generate m samples from model
     if args.plot:
@@ -79,11 +80,11 @@ if __name__ == "__main__":
         samples = 100000
         X0, _ = train_set[0]
         X0 = X0.squeeze()
-        x = torch.round(torch.rand(args.nodes, device=device))
         plt.figure(figsize=(4.2, 4))
+        # x = torch.round(torch.rand(args.nodes, device=device))
         for i in range(1, m ** 2 + 1):
             plt.subplot(m, m, i)
-            x = model.gibbs(samples, x)
+            x = model.gibbs(samples)
             plt.imshow(x[:X0.view(-1).shape[0]].view(X0.shape[0], -1), cmap=plt.cm.gray_r, interpolation='nearest')
             plt.xticks(())
             plt.yticks(())
