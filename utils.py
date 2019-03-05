@@ -59,10 +59,11 @@ def savefig(fname, gtype, verbose=True):
         print("Figure saved as '{}'".format(fname))
 
 class subSampler(Sampler):
-    def __init__(self, num_list, train_set):
+    def __init__(self, num_list, train_set, max_num=5500):
         self.num_list = num_list
         mask = torch.zeros(len(train_set.train_labels), dtype=torch.uint8)
         for num in num_list:
+            # Need to make dataset balanced?
             mask = mask | (train_set.train_labels == num)
         print("     Size of dataset: %d" % mask[mask != 0].shape[0])
         self.mask = mask

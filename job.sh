@@ -4,6 +4,7 @@
 #SBATCH --mem=32000
 #SBATCH --time=0-08:00
 #SBATCH --output=%N-%j.out
+#SBATCH --array=4-9
 module load miniconda3
 source activate pytorch
-python main.py -l -t -p -n 20000 -e 2 -b 20 -d 0 1 -lr 0.01 -da 0.2
+python main.py -l -p -g 1 -n 100000 -k $SLURM_ARRAY_TASK_ID -e 20 -d 0 1 -lr 0.01 -th 100.0

@@ -24,7 +24,7 @@ MODEL_DIR = 'data/model/'
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     # Script Parameters
-    parser.add_argument("-l", "--load", action="store_false")
+    parser.add_argument("-l", "--load", action="store_true")
     parser.add_argument("-t", "--train", action="store_true")
     parser.add_argument("-p", "--plot", action="store_true")
     parser.add_argument("-x", "--exact", action="store_true")
@@ -33,12 +33,13 @@ if __name__ == "__main__":
     # Graph Parameters
     parser.add_argument("-g", "--graph_type", type=int, default=2)
     parser.add_argument("-n", "--nodes", type=int, default=int(1e4))
+    parser.add_argument("-k", "--degree", type=int, default=5)
     # Hyperparameters
     parser.add_argument("-e", "--epochs", type=int, default=3)
     parser.add_argument("-b", "--batch_size", type=int, default=20)
     parser.add_argument("-lr", "--learning_rate", type=float, default=0.01)
     parser.add_argument("-ld", "--lr_decay", type=float, default=0.1)
-    parser.add_argument("-ep", "--epsilon", type=float, default=1e-4)
+    parser.add_argument("-ep", "--epsilon", type=float, default=1e-5)
     parser.add_argument("-mi", "--max_iters", type=int, default=200)
     parser.add_argument("-th", "--threshold", type=float, default=10.0)
     parser.add_argument("-da", "--damping", type=float, default=0.5)
@@ -52,10 +53,13 @@ if __name__ == "__main__":
         os.mkdir(root)
     trans = transforms.Compose([transforms.ToTensor()])
     train_set = dset.MNIST(root=root, train=True, transform=trans, download=True)
-    print("%s graph with %d nodes" % (GType(args.graph_type).name, args.nodes))
+    print("%s graph with %d nodes, %d degree" % (GType(args.graph_type).name, args.nodes, args.degree))
+    prefix = '%d_%d_' % (len(args.numbers), args.nodes)
+    if args.graph_type == GType.KR:
+        prefix += '%d_' % args.degree
 
     # Initialize model
-    model = SparseMP(gtype=GType(args.graph_type), n=args.nodes, load=args.load, numbers=args.numbers,
+    model = SparseMP(gtype=GType(args.graph_type), n=args.nodes, k=args.degree, load=args.load, numbers=args.numbers,
         lr=args.learning_rate, lr_decay=args.lr_decay, damping=args.damping, eps=args.epsilon, th=args.threshold, max_iters=args.max_iters,
         device=device)
 
@@ -69,7 +73,7 @@ if __name__ == "__main__":
         plt.plot(np.arange(0, len(pseudo_trend)), pseudo_trend)
         plt.xlabel('iter')
         plt.ylabel('bethe free energy')
-        title = '(%d, %d) bethe' % (len(args.numbers), args.nodes)
+        title = '(%d, %d, %d) bethe' % (len(args.numbers), args.nodes, args.degree)
         plt.title(title)
         plt.legend()
         savefig(title, GType(args.graph_type))
@@ -91,7 +95,7 @@ if __name__ == "__main__":
             print("SMP: " + str(i) + " images generated.")
         plt.suptitle('Regenerated numbers', fontsize=16)
         plt.subplots_adjust(0.08, 0.02, 0.92, 0.85, 0.08, 0.23)
-        savefig("(%d, %d) gibbs" % (len(args.numbers), args.nodes), GType(args.graph_type))
+        savefig("(%d, %d, %d) gibbs" % (len(args.numbers), args.nodes, args.degree), GType(args.graph_type))
 
     if args.exact:
         # Get marginals using message passing

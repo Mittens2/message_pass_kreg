@@ -12,12 +12,13 @@ MODEL_DIR = 'data/model/'
 
 class SparseMP():
 
-    def __init__(self, gtype, n, numbers, seed=42, load=False,
-                 lr=0.1, damping=0.2, eps=1e-4, th=10.0, max_iters=200, lr_decay=0.1, device=torch.device("cpu")):
+    def __init__(self, gtype, n, k, numbers, seed=42, load=False,
+                 lr=0.1, damping=0.2, eps=1e-5, th=10.0, max_iters=200, lr_decay=0.1, device=torch.device("cpu")):
         # Model parameters
         torch.manual_seed(seed)
         self.gtype = gtype
         self.n = n
+        self.k = k
         self.numbers = len(numbers)
         self.lr_decay = lr_decay
         self.best_bethe = -float('inf')
@@ -40,7 +41,7 @@ class SparseMP():
                 col = torch.LongTensor(col_list)
             else: # Use nx for tree (exact inference test) or K-regular
                 if gtype == GType.KR:
-                    G = nx.random_regular_graph((n + 1) / n * math.log(n), n)
+                    G = nx.random_regular_graph(k, n)
                 else:
                     G = nx.star_graph(n=n-1)
                 print("Graph connected? %r" % (nx.is_connected(G)))
@@ -79,9 +80,13 @@ class SparseMP():
         """Load model parameters
         """
         n = self.n
+        k = self.k
         numbers = self.numbers
-        fn_weights = os.path.join(MODEL_DIR, self.gtype.name, '%d_%d_weights.pt' % (numbers, n))
-        fn_adjecency = os.path.join(MODEL_DIR, self.gtype.name, '%d_%d_adjecency.pt' % (numbers, n))
+        prefix = '%d_%d_' % (numbers, n)
+        if self.gtype == GType.KR:
+            prefix += '%d_' % k
+        fn_weights = os.path.join(MODEL_DIR, self.gtype.name, prefix + 'weights.pt')
+        fn_adjecency = os.path.join(MODEL_DIR, self.gtype.name,  prefix + 'adjecency.pt')
 
         if not os.path.exists(fn_weights):
             return False
@@ -106,6 +111,7 @@ class SparseMP():
         """Save model parameters
         """
         n = self.n
+        k = self.k
         numbers = self.numbers
         local = self.local
         adj = self.adj
@@ -118,9 +124,11 @@ class SparseMP():
              row = row.to(torch.device("cpu"))
              col = col.to(torch.device("cpu"))
              r2c = r2c.to(torch.device("cpu"))
-
-        fn_weights = os.path.join(MODEL_DIR, self.gtype.name, '%d_%d_weights.pt' % (numbers, n))
-        fn_adjecency = os.path.join(MODEL_DIR, self.gtype.name, '%d_%d_adjecency.pt' % (numbers, n))
+        prefix = '%d_%d_' % (numbers, n)
+        if self.gtype == GType.KR:
+            prefix += '%d_' % k
+        fn_weights = os.path.join(MODEL_DIR, self.gtype.name, prefix + 'weights.pt')
+        fn_adjecency = os.path.join(MODEL_DIR, self.gtype.name,  prefix + 'adjecency.pt')
 
         torch.save((local, adj), fn_weights)
         torch.save((row, col, r2c), fn_adjecency)
@@ -134,7 +142,7 @@ class SparseMP():
             num_workers = 0
         train_loader = DataLoader(train_set, batch_size=batch_size, sampler=sampler, num_workers=num_workers)
         bethe_trend = []
-        lr_decay_epoch = [0, 1, 4]
+        # lr_decay_epoch = [3]
         for i in range(epochs):
             bethe_epoch = []
             print("epoch %d" %(i))
@@ -150,10 +158,10 @@ class SparseMP():
                 bethe_epoch += [bethe_batch]
                 print("     epoch bethe: %.3g \n" % (sum(bethe_epoch) / (j + 1)))
             self.save_params()
-            if i in lr_decay_epoch:
-                self.lr *= 0.1
-                self.eps *= 0.1
-                self.damping += 0.2
+            # if i in lr_decay_epoch:
+            #     self.lr *= 0.1
+            #     self.eps *= 0.1
+                # self.damping += 0.2
             bethe_trend += bethe_epoch
         print("     local weights")
         print(self.local[:data.shape[0]])
@@ -196,14 +204,15 @@ class SparseMP():
         """
         clamp = data.shape[0]
         batch_size = data.shape[1]
-        adj = self.adj.clone().unsqueeze(1).expand(-1, batch_size)
-        local = self.local.clone().unsqueeze(1).expand(-1, batch_size)
+        adj = self.adj.clone().unsqueeze(1).repeat(1, batch_size)
+        local = self.local.clone().unsqueeze(1).repeat(1, batch_size)
         row = self.row
         col = self.col
         n = local.shape[0]
 
         # Add interaction of clamped units to local biases based on data vectors
         local.index_add_(0, col[row < clamp], adj[row < clamp] * data[row[row < clamp]])
+        local[:clamp] = 0
         # Set interaction of clamped units to 0
         adj[row < clamp] = 0
         adj[col < clamp] = 0
@@ -271,9 +280,9 @@ class SparseMP():
         neg_clamp = torch.sum(torch.log(p_ij_cond)[mask] * p_ij_cond[mask]) / 2
         const_clamp = torch.zeros(n, device=self.device).index_add_(0, row[col >= clamp], torch.ones(row[col >= clamp].shape[0], device=self.device)) - 1
         mask = (p_i_cond != 0)
-        pos_clamp = torch.sum(const_clamp[mask] * (p_i_cond[mask] * torch.log(p_i_cond[p_i_cond != 0])))
+        pos_clamp = torch.sum(const_clamp[mask] * (p_i_cond[mask] * torch.log(p_i_cond[mask])))
         entropy_clamp = pos_clamp - neg_clamp
-        energy = torch.sum((p_ij_cond - p_ij_marg) * self.adj) + torch.sum((p_i_cond - p_i_marg) * self.local)
+        energy = torch.sum((p_ij_cond - p_ij_marg) * self.adj) / 2 + torch.sum((p_i_cond - p_i_marg) * self.local)
 
         neg = torch.sum(torch.log(p_ij_marg) * p_ij_marg) / 2
         const = torch.zeros(n, device=self.device).index_add_(0, row, torch.ones(row.shape[0], device=self.device)) - 1
