@@ -3,7 +3,7 @@
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32000
 #SBATCH --time=0-08:00
-#SBATCH --output=%N-%j.out
+# SBATCH --output=%N-%j.out
 #SBATCH --array=4-9
 module load miniconda3
 source activate pytorch

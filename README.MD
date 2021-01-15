@@ -1,0 +1,1 @@
+This code runs a novel neural network implementation - a network that is a k-regular graph, trained via loopy belief propagation.
