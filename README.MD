@@ -37,5 +37,7 @@ The script can be run with the following arguments
 
 ## Results
 
-Graph fails to learn multimodal distributions. Here is output for training on single number.
-![learns_single](figs/learns_single.png)
+Graph fails to learn multimodal distributions. Here is output for training on single digit (0).
+![learns single digit](figs/learns_single.png)
+And here is when training on both 0 and 1.
+![does not learn two digits](figs/no_learns_double.png)
