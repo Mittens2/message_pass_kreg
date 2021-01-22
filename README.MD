@@ -8,7 +8,7 @@ This code runs a novel neural network implementation - a network that is a k-reg
 * torchvision
 * scipy
 
-## Running Instruction
+## Running Instructions
 
 The script can be run with the following arguments
 
